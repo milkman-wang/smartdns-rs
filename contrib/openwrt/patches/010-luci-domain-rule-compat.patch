@@ -77,10 +77,10 @@ index 0dff01facdad1b93ac6f62dbcf76d67d1435989c..91ddc4c4f58e9b21ee37402c5da7a907
      }
  }
 diff --git a/src/config/parser/domain_rule.rs b/src/config/parser/domain_rule.rs
-index 93fda68d8e814b3aaafc7530e16dc61d716425ad..44aceec142e15bda8347e3a0f8f02ddc1a6b8074 100644
+index 93fda68d8e814b3aaafc7530e16dc61d716425ad..385b75e8159d26e43cae7173aad3d44c528733b1 100644
 --- a/src/config/parser/domain_rule.rs
 +++ b/src/config/parser/domain_rule.rs
-@@ -25,9 +25,21 @@ impl NomParser for DomainRule {
+@@ -25,13 +25,22 @@ impl NomParser for DomainRule {
                  },
              ),
              map(
@@ -92,19 +92,21 @@ index 93fda68d8e814b3aaafc7530e16dc61d716425ad..44aceec142e15bda8347e3a0f8f02ddc
                  |v| {
 -                    rule.nameserver = Some(v.to_string());
 +                    rule.nameserver = Some(v);
-+                },
-+            ),
-+            map(
-+                parse_value(
-+                    alt((tag_no_case("dualstack-ip-selection"), tag("d"))),
-+                    bool::parse,
-+                ),
-+                |v| {
-+                    rule.dualstack_ip_selection = Some(v);
                  },
              ),
              map(
-@@ -48,6 +60,9 @@ impl NomParser for DomainRule {
+-                parse_flag(alt((tag_no_case("dualstack-ip-selection"), tag("d")))),
++                alt((
++                    parse_value(
++                        alt((tag_no_case("dualstack-ip-selection"), tag("d"))),
++                        bool::parse,
++                    ),
++                    parse_flag(alt((tag_no_case("dualstack-ip-selection"), tag("d")))),
++                )),
+                 |v| {
+                     rule.dualstack_ip_selection = Some(v);
+                 },
+@@ -48,6 +57,9 @@ impl NomParser for DomainRule {
              map(parse_flag(tag_no_case("no-serve-expired")), |v| {
                  rule.no_serve_expired = Some(v);
              }),
@@ -114,7 +116,7 @@ index 93fda68d8e814b3aaafc7530e16dc61d716425ad..44aceec142e15bda8347e3a0f8f02ddc
              map(
                  parse_value(
                      alt((tag_no_case("response-mode"), tag("r"))),
-@@ -168,6 +183,47 @@ mod tests {
+@@ -168,6 +180,47 @@ mod tests {
                  }
              ))
          );
