@@ -8,6 +8,7 @@ use std::{env, path::Path};
 #[cfg(target_os = "linux")]
 fn build_nftset() -> anyhow::Result<()> {
     let target = env::var("TARGET")?;
+    let use_openwrt_toolchain = env::var_os("SMARTDNS_OPENWRT").is_some();
 
     if !target.contains("linux") {
         return Ok(());
@@ -16,7 +17,7 @@ fn build_nftset() -> anyhow::Result<()> {
     let mut build = cc::Build::new();
     build.file("include/nftset.c").warnings(false);
 
-    if target.ends_with("-musl") {
+    if target.ends_with("-musl") && !use_openwrt_toolchain {
         let target_dir = env::var_os("OUT_DIR").unwrap();
         let musl_root = Path::new(&target_dir);
         let target = target.replace("unknown-linux", "linux");
@@ -47,13 +48,18 @@ fn build_nftset() -> anyhow::Result<()> {
 
     build.compile("nftset");
 
-    bindgen::Builder::default()
-        .header("include/nftset.h")
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-        .generate()
-        .expect("Unable to generate bindings")
-        .write_to_file("src/ffi/nftset_sys.rs")
-        .unwrap();
+    // OpenWrt already supplies the target compiler, sysroot and headers. Its
+    // reproducible package build also uses the checked-in bindings instead of
+    // requiring a host libclang or modifying the extracted source tree.
+    if !use_openwrt_toolchain {
+        bindgen::Builder::default()
+            .header("include/nftset.h")
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+            .generate()
+            .expect("Unable to generate bindings")
+            .write_to_file("src/ffi/nftset_sys.rs")
+            .unwrap();
+    }
 
     Ok(())
 }

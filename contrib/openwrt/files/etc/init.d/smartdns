@@ -1,0 +1,863 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=SC2034,SC3043
+
+# SmartDNS-rs OpenWrt integration. The public service/UCI name intentionally
+# remains "smartdns" so the original LuCI RPC and status contracts keep working.
+
+START=19
+STOP=82
+USE_PROCD=1
+
+NAME=smartdns
+PROG=/usr/sbin/smartdns
+
+CONF_DIR=/etc/smartdns
+RUNTIME_DIR=/var/etc/smartdns
+RUNTIME_CONF=$RUNTIME_DIR/smartdns.conf
+RUNTIME_TMP=$RUNTIME_CONF.tmp
+DOWNLOAD_TMP=/tmp/smartdns-rs-download
+LOG_DIR=/var/log/smartdns
+
+DOMAIN_SET_DIR=$CONF_DIR/domain-set
+IP_SET_DIR=$CONF_DIR/ip-set
+DOWNLOAD_DIR=$CONF_DIR/download
+CONF_DOWNLOAD_DIR=$CONF_DIR/conf.d
+
+ADDRESS_CONF=$CONF_DIR/address.conf
+BLACKLIST_CONF=$CONF_DIR/blacklist-ip.conf
+CUSTOM_CONF=$CONF_DIR/custom.conf
+FORWARDING_LIST=$CONF_DIR/domain-forwarding.list
+BLOCK_LIST=$CONF_DIR/domain-block.list
+
+EXTRA_COMMANDS="updatefiles check"
+EXTRA_HELP="        updatefiles      Download configured rule files
+        check            Generate and validate the effective configuration"
+
+SERVICE_ENABLED=0
+SERVICE_PORT=6053
+AUTO_SET_DNSMASQ=1
+COREDUMP=0
+GLOBAL_LOADED=0
+RELOADING=0
+DNSMASQ_CHANGED=0
+DOWNLOAD_FAILED=0
+
+ensure_layout()
+{
+	mkdir -p "$RUNTIME_DIR" "$CONF_DOWNLOAD_DIR" "$DOMAIN_SET_DIR" \
+		"$IP_SET_DIR" "$DOWNLOAD_DIR" "$LOG_DIR"
+	touch "$ADDRESS_CONF" "$BLACKLIST_CONF" "$CUSTOM_CONF" \
+		"$FORWARDING_LIST" "$BLOCK_LIST"
+	if id -u nobody >/dev/null 2>&1; then
+		chown nobody "$RUNTIME_DIR" "$LOG_DIR"
+	fi
+}
+
+prepare_writable_file()
+{
+	local path="$1"
+	local directory="$2"
+	local suffix="${3:-}"
+	[ -n "$path" ] || return 1
+	if [ "$(dirname "$path")" != "$directory" ]; then
+		logger -t smartdns-rs "writable file must be directly under $directory: $path"
+		return 1
+	fi
+	if [ -n "$suffix" ]; then
+		case "$(basename "$path")" in
+			*"$suffix") ;;
+			*) logger -t smartdns-rs "writable file must end in $suffix: $path"; return 1 ;;
+		esac
+	fi
+	mkdir -p "$directory" || return 1
+	touch "$path" || return 1
+	if id -u nobody >/dev/null 2>&1; then
+		chown nobody "$path"
+	fi
+}
+
+conf_append()
+{
+	printf '%s %s\n' "$1" "$2" >> "$RUNTIME_TMP"
+}
+
+conf_append_file()
+{
+	local directive="$1"
+	local path="$2"
+	[ -n "$path" ] || return 0
+	[ -f "$path" ] || return 0
+	conf_append "$directive" "$path"
+}
+
+uci_store_value()
+{
+	local destination="$1"
+	local source="$2"
+	local value
+
+	if value="$(uci -q get "$source")"; then
+		uci -q set "$destination=$value"
+	else
+		uci -q set "$destination=__unset__"
+	fi
+}
+
+uci_restore_value()
+{
+	local destination="$1"
+	local stored="$2"
+	local value
+
+	value="$(uci -q get "$stored")"
+	[ -n "$value" ] || return 0
+	if [ "$value" = "__unset__" ]; then
+		uci -q delete "$destination"
+	else
+		uci -q set "$destination=$value"
+	fi
+}
+
+uci_restore_list()
+{
+	local destination="$1"
+	local stored="$2"
+	local value item
+
+	value="$(uci -q get "$stored")"
+	[ -n "$value" ] || return 0
+	uci -q delete "$destination"
+	[ "$value" = "__unset__" ] && return 0
+	printf '%s\n' "$value" | tr ' ' '\n' | while IFS= read -r item; do
+		[ -n "$item" ] && uci -q add_list "$destination=$item"
+	done
+}
+
+dnsmasq_list_has()
+{
+	local option="$1"
+	local expected="$2"
+	uci -q get "$option" 2>/dev/null | tr ' ' '\n' | grep -Fqx "$expected"
+}
+
+restore_dnsmasq()
+{
+	local mode added lan_ip
+
+	mode="$(uci -q get smartdns.@smartdns[0].dnsmasq_managed)"
+	[ -n "$mode" ] || return 0
+
+	case "$mode" in
+		forward)
+			uci_restore_list dhcp.@dnsmasq[0].server smartdns.@smartdns[0].dnsmasq_old_server
+			uci_restore_value dhcp.@dnsmasq[0].noresolv smartdns.@smartdns[0].dnsmasq_old_noresolv
+			uci_restore_value dhcp.@dnsmasq[0].rebind_protection smartdns.@smartdns[0].dnsmasq_old_rebind
+			uci_restore_value dhcp.@dnsmasq[0].domainneeded smartdns.@smartdns[0].dnsmasq_old_domainneeded
+			;;
+		main)
+			uci_restore_value dhcp.@dnsmasq[0].port smartdns.@smartdns[0].dnsmasq_old_port
+			uci_restore_value dhcp.@dnsmasq[0].dns_redirect smartdns.@smartdns[0].dnsmasq_old_dns_redirect
+			added="$(uci -q get smartdns.@smartdns[0].dnsmasq_added_dhcp_option)"
+			lan_ip="$(uci -q get smartdns.@smartdns[0].dnsmasq_managed_lan_ip)"
+			[ "$added" = "1" ] && [ -n "$lan_ip" ] && \
+				uci -q del_list dhcp.lan.dhcp_option="6,$lan_ip"
+			;;
+	esac
+
+	for option in dnsmasq_managed dnsmasq_managed_port dnsmasq_added_server \
+		dnsmasq_old_server \
+		dnsmasq_old_noresolv dnsmasq_old_rebind dnsmasq_old_domainneeded \
+		dnsmasq_old_port dnsmasq_old_dns_redirect dnsmasq_added_dhcp_option \
+		dnsmasq_managed_lan_ip; do
+		uci -q delete "smartdns.@smartdns[0].$option"
+	done
+
+	uci -q commit dhcp
+	uci -q commit smartdns
+	DNSMASQ_CHANGED=1
+}
+
+apply_dnsmasq_forward()
+{
+	local port="$1"
+	local address="127.0.0.1#$1"
+
+	uci_store_value smartdns.@smartdns[0].dnsmasq_old_server dhcp.@dnsmasq[0].server
+	uci_store_value smartdns.@smartdns[0].dnsmasq_old_noresolv dhcp.@dnsmasq[0].noresolv
+	uci_store_value smartdns.@smartdns[0].dnsmasq_old_rebind dhcp.@dnsmasq[0].rebind_protection
+	uci_store_value smartdns.@smartdns[0].dnsmasq_old_domainneeded dhcp.@dnsmasq[0].domainneeded
+
+	uci -q delete dhcp.@dnsmasq[0].server
+	uci -q add_list dhcp.@dnsmasq[0].server="$address"
+	uci -q set dhcp.@dnsmasq[0].noresolv=1
+	uci -q set dhcp.@dnsmasq[0].rebind_protection=0
+	uci -q set dhcp.@dnsmasq[0].domainneeded=0
+	uci -q set smartdns.@smartdns[0].dnsmasq_managed=forward
+	uci -q set smartdns.@smartdns[0].dnsmasq_managed_port="$port"
+	uci -q commit dhcp
+	uci -q commit smartdns
+	DNSMASQ_CHANGED=1
+}
+
+apply_dnsmasq_main()
+{
+	local lan_ip added=0
+
+	lan_ip="$(uci -q get network.lan.ipaddr | sed 's,/.*,,' | head -n 1)"
+	if [ -z "$lan_ip" ]; then
+		logger -t smartdns-rs "cannot take over port 53: network.lan.ipaddr is empty"
+		return 1
+	fi
+
+	uci_store_value smartdns.@smartdns[0].dnsmasq_old_port dhcp.@dnsmasq[0].port
+	uci_store_value smartdns.@smartdns[0].dnsmasq_old_dns_redirect dhcp.@dnsmasq[0].dns_redirect
+	uci -q set dhcp.@dnsmasq[0].port=0
+	[ "$(uci -q get dhcp.@dnsmasq[0].dns_redirect)" = "1" ] && \
+		uci -q set dhcp.@dnsmasq[0].dns_redirect=0
+	if ! dnsmasq_list_has dhcp.lan.dhcp_option "6,$lan_ip"; then
+		uci -q add_list dhcp.lan.dhcp_option="6,$lan_ip"
+		added=1
+	fi
+	uci -q set smartdns.@smartdns[0].dnsmasq_managed=main
+	uci -q set smartdns.@smartdns[0].dnsmasq_managed_lan_ip="$lan_ip"
+	uci -q set smartdns.@smartdns[0].dnsmasq_added_dhcp_option="$added"
+	uci -q commit dhcp
+	uci -q commit smartdns
+	DNSMASQ_CHANGED=1
+}
+
+sync_dnsmasq()
+{
+	DNSMASQ_CHANGED=0
+	restore_dnsmasq
+
+	if [ "$SERVICE_ENABLED" = "1" ] && [ "$AUTO_SET_DNSMASQ" = "1" ]; then
+		if [ "$SERVICE_PORT" = "53" ]; then
+			if ! apply_dnsmasq_main; then
+				[ "$DNSMASQ_CHANGED" = "1" ] && /etc/init.d/dnsmasq restart
+				return 1
+			fi
+		else
+			apply_dnsmasq_forward "$SERVICE_PORT"
+		fi
+	fi
+
+	[ "$DNSMASQ_CHANGED" = "1" ] && /etc/init.d/dnsmasq restart
+	return 0
+}
+
+conf_append_bind()
+{
+	local bind_type="$1"
+	local port="$2"
+	local devices="$3"
+	local ipv6="$4"
+	local args="$5"
+	local device suffix
+
+	devices="$(printf '%s' "$devices" | tr ',' ' ')"
+	[ -n "$devices" ] || devices="-"
+
+	for device in $devices; do
+		suffix="@$device"
+		[ "$device" = "-" ] && suffix=""
+		conf_append "$bind_type" "0.0.0.0:$port$suffix $args"
+		[ "$ipv6" = "1" ] && conf_append "$bind_type" "[::]:$port$suffix $args"
+	done
+}
+
+conf_append_loopback_bind()
+{
+	local bind_type="$1"
+	local port="$2"
+	local ipv6="$3"
+	local args="$4"
+
+	conf_append "$bind_type" "127.0.0.1:$port $args"
+	[ "$ipv6" = "1" ] && conf_append "$bind_type" "[::1]:$port $args"
+}
+
+load_server()
+{
+	local section="$1"
+	local enabled type ip port directive address args is_uri
+	local tls_host_verify no_check_certificate host_name server_group
+	local exclude_default_group blacklist_ip check_edns set_mark use_proxy addition_arg
+	args=""
+
+	config_get_bool enabled "$section" enabled 1
+	[ "$enabled" = "1" ] || return 0
+	config_get type "$section" type udp
+	config_get ip "$section" ip
+	config_get port "$section" port
+	[ -n "$ip" ] || return 0
+
+	case "$type" in
+		udp) directive=server ;;
+		tcp) directive=server-tcp ;;
+		tls) directive=server-tls ;;
+		https) directive=server-https ;;
+		quic) directive=server-quic ;;
+		h3) directive=server-h3 ;;
+		*) logger -t smartdns-rs "skip unsupported upstream type: $type"; return 0 ;;
+	esac
+
+	is_uri=0
+	case "$ip" in
+		*://*) is_uri=1 ;;
+		*:*) case "$ip" in \[*\]) ;; *) ip="[$ip]" ;; esac ;;
+	esac
+	if [ -n "$port" ] && [ "$is_uri" = "0" ]; then
+		address="$ip:$port"
+	else
+		address="$ip"
+	fi
+
+	args=""
+	config_get tls_host_verify "$section" tls_host_verify
+	config_get_bool no_check_certificate "$section" no_check_certificate 0
+	config_get host_name "$section" host_name
+	config_get server_group "$section" server_group
+	config_get_bool exclude_default_group "$section" exclude_default_group 0
+	config_get_bool blacklist_ip "$section" blacklist_ip 0
+	config_get_bool check_edns "$section" check_edns 0
+	config_get set_mark "$section" set_mark
+	config_get_bool use_proxy "$section" use_proxy 0
+	config_get addition_arg "$section" addition_arg
+
+	[ -n "$tls_host_verify" ] && args="$args -tls-host-verify $tls_host_verify"
+	[ "$no_check_certificate" = "1" ] && args="$args -no-check-certificate"
+	[ -n "$host_name" ] && args="$args -host-name $host_name"
+	[ -n "$server_group" ] && args="$args -group $server_group"
+	[ "$exclude_default_group" = "1" ] && args="$args -exclude-default-group"
+	[ "$blacklist_ip" = "1" ] && args="$args -blacklist-ip"
+	[ "$check_edns" = "1" ] && args="$args -check-edns"
+	[ -n "$set_mark" ] && args="$args -set-mark $set_mark"
+	[ "$use_proxy" = "1" ] && args="$args -proxy default-proxy"
+	[ -n "$addition_arg" ] && args="$args $addition_arg"
+
+	conf_append "$directive" "$address$args"
+}
+
+append_conf_file()
+{
+	local file="$1"
+	case "$file" in
+		/*) ;;
+		*) file="$CONF_DOWNLOAD_DIR/$file" ;;
+	esac
+	conf_append_file conf-file "$file"
+}
+
+append_hosts_file()
+{
+	local file="$1"
+	case "$file" in
+		/*) ;;
+		*) file="$DOWNLOAD_DIR/$file" ;;
+	esac
+	conf_append_file hosts-file "$file"
+}
+
+load_second_server()
+{
+	local section="$1"
+	local enabled port tcp ipv6 device args value
+	args=""
+
+	config_get_bool enabled "$section" seconddns_enabled 0
+	[ "$enabled" = "1" ] || return 0
+	config_get port "$section" seconddns_port 6553
+	config_get_bool tcp "$section" seconddns_tcp_server 1
+	config_get_bool ipv6 "$section" ipv6_server 1
+	config_get_bool value "$section" seconddns_no_speed_check 0
+	[ "$value" = "1" ] && args="$args -no-speed-check"
+	config_get value "$section" seconddns_server_group
+	[ -n "$value" ] && args="$args -group $value"
+	for option in no_rule_addr no_rule_nameserver no_rule_ipset no_rule_soa no_dualstack_selection no_cache force_aaaa_soa force_https_soa; do
+		config_get_bool value "$section" "seconddns_$option" 0
+		[ "$value" = "1" ] && args="$args -$(printf '%s' "$option" | tr '_' '-')"
+	done
+	config_get value "$section" seconddns_server_flags
+	[ -n "$value" ] && args="$args $value"
+	config_get_bool value "$section" bind_device 0
+	config_get device "$section" bind_device_name
+	[ "$value" = "1" ] || device=""
+
+	conf_append_bind bind "$port" "$device" "$ipv6" "$args"
+	[ "$tcp" = "1" ] && conf_append_bind bind-tcp "$port" "$device" "$ipv6" "$args"
+}
+
+client_addr_append()
+{
+	conf_append client-rules "$1"
+}
+
+load_client_rule()
+{
+	local section="$1"
+	local enabled args value file
+	args=""
+
+	config_get_bool enabled "$section" enabled 0
+	[ "$enabled" = "1" ] || return 0
+	conf_append group-begin "client-$section"
+	config_list_foreach "$section" client_addr client_addr_append
+
+	config_get value "$section" server_group
+	[ -n "$value" ] && conf_append nameserver "/./$value"
+	config_get value "$section" speed_check_mode
+	[ -n "$value" ] && args="$args -speed-check-mode $value"
+	config_get value "$section" dualstack_ip_selection
+	[ -n "$value" ] && args="$args -dualstack-ip-selection $value"
+	config_get_bool value "$section" force_aaaa_soa 0
+	[ "$value" = "1" ] && args="$args -address #6"
+	config_get value "$section" nftset_name
+	[ -n "$value" ] && args="$args -nftset $value"
+	[ -n "$args" ] && conf_append domain-rules "/./$args"
+
+	config_get file "$section" block_domain_set_file
+	if [ -n "$file" ] && [ -f "$file" ]; then
+		conf_append domain-set "-name client-block-$section -file $file"
+		conf_append domain-rules "/domain-set:client-block-$section/ -address #"
+	fi
+	config_list_foreach "$section" conf_files append_conf_file
+	printf '%s\n' 'group-end' >> "$RUNTIME_TMP"
+}
+
+load_domain_rule()
+{
+	local section="$1"
+	local args value file
+	args=""
+
+	config_get value "$section" server_group
+	[ -n "$value" ] && args="$args -nameserver $value"
+	config_get value "$section" speed_check_mode
+	[ -n "$value" ] && args="$args -speed-check-mode $value"
+	config_get value "$section" dualstack_ip_selection
+	[ -n "$value" ] && args="$args -dualstack-ip-selection $value"
+	config_get_bool value "$section" force_aaaa_soa 0
+	[ "$value" = "1" ] && args="$args -address #6"
+	config_get value "$section" nftset_name
+	[ -n "$value" ] && args="$args -nftset $value"
+	config_get value "$section" addition_flag
+	[ -n "$value" ] && args="$args $value"
+
+	config_get file "$section" forwarding_domain_set_file
+	if [ -n "$args" ] && [ -n "$file" ] && [ -f "$file" ]; then
+		conf_append domain-set "-name forwarding-upload -file $file"
+		conf_append domain-rules "/domain-set:forwarding-upload/$args"
+	fi
+	if [ -n "$args" ]; then
+		conf_append domain-set "-name forwarding-list -file $FORWARDING_LIST"
+		conf_append domain-rules "/domain-set:forwarding-list/$args"
+	fi
+
+	config_get file "$section" block_domain_set_file
+	if [ -n "$file" ] && [ -f "$file" ]; then
+		conf_append domain-set "-name block-upload -file $file"
+		conf_append domain-rules "/domain-set:block-upload/ -address #"
+	fi
+	conf_append domain-set "-name block-list -file $BLOCK_LIST"
+	conf_append domain-rules "/domain-set:block-list/ -address #"
+}
+
+load_domain_rule_list()
+{
+	local section="$1"
+	local enabled args value file
+	args=""
+
+	config_get_bool enabled "$section" enabled 0
+	[ "$enabled" = "1" ] || return 0
+	config_get file "$section" domain_list_file
+	[ -n "$file" ] && [ -f "$file" ] || return 0
+	config_get value "$section" server_group
+	[ -n "$value" ] && args="$args -nameserver $value"
+	config_get value "$section" block_domain_type
+	case "$value" in all) args="$args -address #" ;; ipv4) args="$args -address #4" ;; ipv6) args="$args -address #6" ;; esac
+	config_get value "$section" speed_check_mode
+	[ -n "$value" ] && args="$args -speed-check-mode $value"
+	config_get value "$section" dualstack_ip_selection
+	[ -n "$value" ] && args="$args -dualstack-ip-selection $value"
+	config_get_bool value "$section" force_aaaa_soa 0
+	[ "$value" = "1" ] && args="$args -address #6"
+	config_get value "$section" nftset_name
+	[ -n "$value" ] && args="$args -nftset $value"
+	config_get value "$section" addition_flag
+	[ -n "$value" ] && args="$args $value"
+	[ -n "$args" ] || return 0
+	conf_append domain-set "-name domain-$section -file $file"
+	conf_append domain-rules "/domain-set:domain-$section/$args"
+}
+
+ip_rule_addr_append()
+{
+	emit_ip_rule "$1"
+}
+
+emit_ip_rule()
+{
+	local source="$1"
+	[ "$IP_WHITELIST" = "1" ] && conf_append whitelist-ip "$source"
+	[ "$IP_BLACKLIST" = "1" ] && conf_append blacklist-ip "$source"
+	[ "$IP_IGNORE" = "1" ] && conf_append ignore-ip "$source"
+	[ "$IP_BOGUS" = "1" ] && conf_append bogus-nxdomain "$source"
+	[ -n "$IP_ALIAS_TARGETS" ] && conf_append ip-alias "$source $IP_ALIAS_TARGETS"
+}
+
+load_ip_rule()
+{
+	local section="$1"
+	local enabled file set_name
+
+	config_get_bool enabled "$section" enabled 0
+	[ "$enabled" = "1" ] || return 0
+	config_get_bool IP_WHITELIST "$section" whitelist_ip 0
+	config_get_bool IP_BLACKLIST "$section" blacklist_ip 0
+	config_get_bool IP_IGNORE "$section" ignore_ip 0
+	config_get_bool IP_BOGUS "$section" bogus_nxdomain 0
+	config_get IP_ALIAS_TARGETS "$section" ip_alias
+	IP_ALIAS_TARGETS="$(printf '%s' "$IP_ALIAS_TARGETS" | tr ' ' ',')"
+
+	config_get file "$section" ip_set_file
+	if [ -n "$file" ] && [ -f "$file" ]; then
+		set_name="ip-$section"
+		conf_append ip-set "-name $set_name -file $file"
+		emit_ip_rule "ip-set:$set_name"
+	fi
+	config_list_foreach "$section" ip_addr ip_rule_addr_append
+}
+
+load_global()
+{
+	local section="$1"
+	local value device ipv6 tcp tls doh port flags log_file cache_file lease_file resolv_file
+
+	[ "$GLOBAL_LOADED" = "0" ] || return 0
+	GLOBAL_LOADED=1
+	config_get_bool SERVICE_ENABLED "$section" enabled 0
+	config_get SERVICE_PORT "$section" port 6053
+	config_get_bool AUTO_SET_DNSMASQ "$section" auto_set_dnsmasq 1
+	config_get_bool COREDUMP "$section" coredump 0
+
+	# Keep the original luci-app-smartdns redirect setting readable so an
+	# existing UCI file can be reused without a destructive migration.
+	config_get value "$section" redirect
+	case "$value" in
+		redirect)
+			SERVICE_PORT=53
+			AUTO_SET_DNSMASQ=1
+			;;
+		dnsmasq-upstream)
+			AUTO_SET_DNSMASQ=1
+			;;
+		none)
+			AUTO_SET_DNSMASQ=0
+			;;
+	esac
+
+	config_get value "$section" server_name
+	[ -n "$value" ] && conf_append server-name "$value"
+	for option in speed_check_mode response_mode cache_size rr_ttl rr_ttl_min rr_ttl_max rr_ttl_reply_max; do
+		config_get value "$section" "$option"
+		[ -n "$value" ] && conf_append "$(printf '%s' "$option" | tr '_' '-')" "$value"
+	done
+	for option in dualstack_ip_selection prefetch_domain serve_expired mdns_lookup; do
+		config_get value "$section" "$option"
+		[ -n "$value" ] && conf_append "$(printf '%s' "$option" | tr '_' '-')" "$value"
+	done
+
+	config_get_bool value "$section" cache_persist 1
+	conf_append cache-persist "$( [ "$value" = "1" ] && echo yes || echo no )"
+	config_get cache_file "$section" cache_file "$CONF_DIR/smartdns.cache"
+	if [ "$value" = "1" ]; then
+		prepare_writable_file "$cache_file" "$CONF_DIR" .cache || return 1
+		conf_append cache-file "$cache_file"
+	fi
+
+	lease_file="$(uci -q get dhcp.@dnsmasq[0].leasefile)"
+	[ -n "$lease_file" ] || lease_file=/tmp/dhcp.leases
+	config_get_bool value "$section" resolve_local_hostnames 1
+	[ "$value" = "1" ] && conf_append dnsmasq-lease-file "$lease_file"
+	resolv_file="$(uci -q get dhcp.@dnsmasq[0].resolvfile)"
+	[ -n "$resolv_file" ] || resolv_file=/tmp/resolv.conf.d/resolv.conf.auto
+	[ -f "$resolv_file" ] && conf_append resolv-file "$resolv_file"
+
+	config_get_bool value "$section" force_aaaa_soa 0
+	[ "$value" = "1" ] && conf_append force-qtype-SOA 28
+	config_get_bool value "$section" force_https_soa 1
+	[ "$value" = "1" ] && conf_append force-qtype-SOA 65
+
+	config_get value "$section" proxy_server
+	[ -n "$value" ] && conf_append proxy-server "$value -name default-proxy"
+	config_get value "$section" dns64
+	[ -n "$value" ] && conf_append dns64 "$value"
+
+	config_get value "$section" log_level warn
+	conf_append log-level "$value"
+	config_get value "$section" log_size 128K
+	conf_append log-size "$value"
+	config_get value "$section" log_num 2
+	conf_append log-num "$value"
+	config_get log_file "$section" log_file /var/log/smartdns/smartdns.log
+	prepare_writable_file "$log_file" "$LOG_DIR" || return 1
+	conf_append log-file "$log_file"
+
+	config_get_bool value "$section" enable_audit_log 0
+	conf_append audit-enable "$( [ "$value" = "1" ] && echo yes || echo no )"
+	if [ "$value" = "1" ]; then
+		config_get value "$section" audit_log_size 128K; conf_append audit-size "$value"
+		config_get value "$section" audit_log_num 2; conf_append audit-num "$value"
+		config_get value "$section" audit_log_file /var/log/smartdns/smartdns-audit.log
+		prepare_writable_file "$value" "$LOG_DIR" || return 1
+		conf_append audit-file "$value"
+	fi
+
+	config_get_bool ipv6 "$section" ipv6_server 1
+	config_get_bool tcp "$section" tcp_server 1
+	config_get_bool tls "$section" tls_server 0
+	config_get_bool doh "$section" doh_server 0
+	config_get_bool value "$section" bind_device 0
+	config_get device "$section" bind_device_name
+	if [ "$value" = "1" ] && [ -z "$device" ]; then
+		device="$(uci -q get network.lan.device)"
+	fi
+	[ "$value" = "1" ] || device=""
+	config_get flags "$section" server_flags
+	conf_append_bind bind "$SERVICE_PORT" "$device" "$ipv6" "$flags"
+	[ "$tcp" = "1" ] && conf_append_bind bind-tcp "$SERVICE_PORT" "$device" "$ipv6" "$flags"
+	# Interface-bound listeners do not cover the router's own resolver.  Keep
+	# loopback available so opkg, downloads and local services can resolve too.
+	if [ -n "$device" ]; then
+		case " $(printf '%s' "$device" | tr ',' ' ') " in
+			*" lo "*) ;;
+			*)
+				conf_append_loopback_bind bind "$SERVICE_PORT" "$ipv6" "$flags"
+				[ "$tcp" = "1" ] && conf_append_loopback_bind bind-tcp "$SERVICE_PORT" "$ipv6" "$flags"
+				;;
+		esac
+	fi
+	if [ "$tls" = "1" ] || [ "$doh" = "1" ]; then
+		config_get value "$section" bind_cert
+		[ -n "$value" ] && conf_append bind-cert-file "$value"
+		config_get value "$section" bind_cert_key
+		[ -n "$value" ] && conf_append bind-cert-key-file "$value"
+		config_get value "$section" bind_cert_key_pass
+		[ -n "$value" ] && conf_append bind-cert-key-pass "$value"
+	fi
+	if [ "$tls" = "1" ]; then
+		config_get port "$section" tls_server_port 853
+		conf_append_bind bind-tls "$port" "$device" "$ipv6" "$flags"
+	fi
+	if [ "$doh" = "1" ]; then
+		config_get port "$section" doh_server_port 8443
+		conf_append_bind bind-https "$port" "$device" "$ipv6" "$flags"
+	fi
+
+	load_second_server "$section"
+	config_list_foreach "$section" conf_files append_conf_file
+	config_list_foreach "$section" hosts_files append_hosts_file
+}
+
+generate_config()
+{
+	ensure_layout
+	rm -f "$RUNTIME_TMP"
+	printf '%s\n' '# Generated from /etc/config/smartdns by /etc/init.d/smartdns.' > "$RUNTIME_TMP"
+	conf_append user nobody
+	SERVICE_ENABLED=0
+	SERVICE_PORT=6053
+	AUTO_SET_DNSMASQ=1
+	COREDUMP=0
+	GLOBAL_LOADED=0
+
+	config_load smartdns
+	config_foreach load_global smartdns
+	config_foreach load_server server
+	config_foreach load_client_rule client-rule
+	config_foreach load_domain_rule domain-rule
+	config_foreach load_domain_rule_list domain-rule-list
+	config_foreach load_ip_rule ip-rule
+	config_foreach load_ip_rule ip-rule-list
+	conf_append_file conf-file "$ADDRESS_CONF"
+	conf_append_file conf-file "$BLACKLIST_CONF"
+	conf_append_file conf-file "$CUSTOM_CONF"
+	return 0
+}
+
+validate_config()
+{
+	local promote="${1:-0}"
+	local output status
+	output="$($PROG test -d "$CONF_DIR" -c "$RUNTIME_TMP" 2>&1)"
+	status=$?
+	[ -n "$output" ] && logger -t smartdns-rs "$output"
+	if [ "$status" -ne 0 ]; then
+		logger -t smartdns-rs "configuration validation failed"
+		return "$status"
+	fi
+	[ "$promote" = "1" ] && mv "$RUNTIME_TMP" "$RUNTIME_CONF"
+	return 0
+}
+
+configure_auto_update()
+{
+	local section="$1"
+	local enabled week hour tmp
+	config_get_bool enabled "$section" enable_auto_update 0
+	config_get week "$section" auto_update_week_time '*'
+	config_get hour "$section" auto_update_day_time 5
+	tmp=/tmp/smartdns-rs-crontab.$$
+	sed '/# smartdns-rs-update$/d' /etc/crontabs/root 2>/dev/null > "$tmp"
+	if [ "$SERVICE_ENABLED" = "1" ] && [ "$enabled" = "1" ]; then
+		printf '0 %s * * %s /etc/init.d/smartdns updatefiles # smartdns-rs-update\n' "$hour" "$week" >> "$tmp"
+	fi
+	mv "$tmp" /etc/crontabs/root
+	/etc/init.d/cron restart >/dev/null 2>&1
+}
+
+check_and_add_sections()
+{
+	local changed=0
+	if ! uci -q get smartdns.@smartdns[0] >/dev/null; then
+		uci -q add smartdns smartdns >/dev/null
+		changed=1
+	fi
+	if ! uci -q get smartdns.@domain-rule[0] >/dev/null; then
+		uci -q add smartdns domain-rule >/dev/null
+		changed=1
+	fi
+	if ! uci -q get smartdns.@ip-rule[0] >/dev/null; then
+		uci -q add smartdns ip-rule >/dev/null
+		changed=1
+	fi
+	[ "$changed" = "1" ] && uci -q commit smartdns
+}
+
+service_triggers()
+{
+	procd_add_reload_trigger smartdns
+}
+
+start_service()
+{
+	check_and_add_sections
+	generate_config || return 1
+	config_foreach configure_auto_update smartdns
+
+	if [ "$SERVICE_ENABLED" != "1" ]; then
+		sync_dnsmasq
+		return 0
+	fi
+	validate_config 1 || {
+		restore_dnsmasq
+		[ "$DNSMASQ_CHANGED" = "1" ] && /etc/init.d/dnsmasq restart
+		return 1
+	}
+	sync_dnsmasq || return 1
+
+	procd_open_instance smartdns
+	procd_set_param command "$PROG" run -d "$CONF_DIR" -c "$RUNTIME_CONF"
+	procd_set_param respawn 3600 5 5
+	procd_set_param file "$RUNTIME_CONF"
+	procd_set_param limits nofile="65535 65535"
+	[ "$COREDUMP" = "1" ] && procd_append_param limits core="unlimited"
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_set_param term_timeout 30
+	procd_close_instance
+}
+
+service_stopped()
+{
+	[ "$RELOADING" = "1" ] && return 0
+	DNSMASQ_CHANGED=0
+	restore_dnsmasq
+	[ "$DNSMASQ_CHANGED" = "1" ] && /etc/init.d/dnsmasq restart
+}
+
+reload_service()
+{
+	RELOADING=1
+	stop
+	start
+	RELOADING=0
+}
+
+download_file()
+{
+	local section="$1"
+	local url name type proxy target tmp status
+	config_get url "$section" url
+	config_get name "$section" name
+	config_get type "$section" type
+	config_get_bool proxy "$section" use_proxy 0
+	[ -n "$url" ] && [ -n "$name" ] && [ -n "$type" ] || return 0
+	case "$name" in ''|.*|*/*|*\\*)
+		DOWNLOAD_FAILED=1
+		logger -t smartdns-rs "reject unsafe download name: $name"
+		return 1
+	;; esac
+	case "$type" in
+		list) target="$DOMAIN_SET_DIR/$name" ;;
+		config) target="$CONF_DOWNLOAD_DIR/$name" ;;
+		ip-set) target="$IP_SET_DIR/$name" ;;
+		hosts) target="$DOWNLOAD_DIR/$name" ;;
+		*)
+			DOWNLOAD_FAILED=1
+			logger -t smartdns-rs "reject unsupported download type: $type"
+			return 1
+		;;
+	esac
+	tmp="$DOWNLOAD_TMP/$name.part"
+	unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
+	if [ "$proxy" = "1" ]; then
+		proxy="$(uci -q get smartdns.@smartdns[0].proxy_server)"
+		export http_proxy="$proxy" https_proxy="$proxy"
+	fi
+	if command -v uclient-fetch >/dev/null 2>&1; then
+		uclient-fetch -q -T 120 -O "$tmp" "$url"
+	else
+		wget -q -T 120 -O "$tmp" "$url"
+	fi
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		mv "$tmp" "$target"
+		logger -t smartdns-rs "updated $target"
+	else
+		DOWNLOAD_FAILED=1
+		rm -f "$tmp"
+		logger -t smartdns-rs "failed to download $url"
+	fi
+	return "$status"
+}
+
+updatefiles()
+{
+	local status
+	if ! mkdir "$DOWNLOAD_TMP" 2>/dev/null; then
+		echo "SmartDNS-rs update is already running."
+		return 1
+	fi
+	DOWNLOAD_FAILED=0
+	config_load smartdns
+	config_foreach download_file download-file
+	status=$DOWNLOAD_FAILED
+	rm -f "$DOWNLOAD_TMP"/*.part
+	rmdir "$DOWNLOAD_TMP"
+	[ "$status" -eq 0 ] && reload
+	return "$status"
+}
+
+check()
+{
+	local status
+	check_and_add_sections
+	generate_config || return 1
+	validate_config
+	status=$?
+	[ "$status" -eq 0 ] && rm -f "$RUNTIME_TMP"
+	return "$status"
+}

@@ -29,6 +29,10 @@ homebrew = [ "common" ]
 
 common = ["resolve-cli", "dns-over-tls", "dns-over-https", "dns-over-quic", "dns-over-h3", "mdns", "dnssec", "service", "nft", "nom-recipes-all", "swagger-ui-cdn", "http_client", "serde" ]
 
+# OpenWrt keeps the DNS protocol and firewall integrations while excluding
+# desktop-only service management, the resolve CLI, and self-updating code.
+openwrt = ["dns-over-tls", "dns-over-https", "dns-over-quic", "dns-over-h3", "mdns", "dnssec", "nft", "nom-recipes-all", "http_client", "serde"]
+
 future-diagnostic = [
   "dep:console-subscriber"
 ]

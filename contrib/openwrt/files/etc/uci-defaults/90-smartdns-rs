@@ -1,0 +1,5 @@
+#!/bin/sh
+
+[ -x /etc/init.d/smartdns ] && /etc/init.d/smartdns enable
+
+exit 0

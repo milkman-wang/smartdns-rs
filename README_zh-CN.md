@@ -66,6 +66,10 @@ SmartDNS-rs 🐋 一个是受 [C 语言版 SmartDNS](https://github.com/pymumu/s
 
 *每日构建的版本可以在[这](https://github.com/mokeyish/smartdns-rs/actions/workflows/nightly.yml)找到。*
 
+- OpenWrt
+
+  仓库内提供可交叉编译的 `smartdns-rs` 包、procd/UCI/dnsmasq 集成和原生 JavaScript LuCI 页面。安装、兼容范围及验证步骤见 [OpenWrt 适配文档](contrib/openwrt/README.md)，Rust/C 性能边界见 [OpenWrt 性能分析](contrib/openwrt/PERFORMANCE.md)。
+
 - MacOS
 
   如果你有安装 [brew](https://brew.sh/) ，可以直接用下面的命令进行安装。
