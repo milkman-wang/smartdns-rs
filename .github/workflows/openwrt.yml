@@ -96,7 +96,9 @@ jobs:
     name: OpenWrt SDK (${{ matrix.arch }})
     needs: contract
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # Snapshot SDKs build rust/host from source on a cold runner. Slower 32-bit
+    # targets can exceed two hours before compiling SmartDNS-rs itself.
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
