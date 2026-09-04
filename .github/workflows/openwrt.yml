@@ -171,6 +171,7 @@ jobs:
           mkdir release
           while IFS= read -r -d '' package; do
             name="$(basename "$package")"
+            safe_name="${name//\~/.}"
             artifact="${package#artifacts/}"
             artifact="${artifact%%/*}"
             arch="${artifact#openwrt-}"
@@ -178,13 +179,13 @@ jobs:
 
             case "$name" in
               smartdns-rs-*.apk)
-                cp "$package" "release/${name%.apk}-$arch.apk"
+                cp "$package" "release/${safe_name%.apk}-$arch.apk"
                 ;;
               smartdns-rs_*.ipk)
-                cp "$package" "release/$name"
+                cp "$package" "release/$safe_name"
                 ;;
               luci-app-smartdns-rs-*.apk|luci-i18n-smartdns-rs-zh-cn-*.apk|luci-app-smartdns-rs_*.ipk|luci-i18n-smartdns-rs-zh-cn_*.ipk)
-                test -e "release/$name" || cp "$package" "release/$name"
+                test -e "release/$safe_name" || cp "$package" "release/$safe_name"
                 ;;
             esac
           done < <(find artifacts -type f -path '*/bin/packages/*/action/*' \( -name '*.ipk' -o -name '*.apk' \) -print0)
