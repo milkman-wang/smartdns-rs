@@ -123,7 +123,7 @@ jobs:
           sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${GITHUB_RUN_NUMBER}/" contrib/openwrt/luci-app-smartdns-rs/Makefile
 
       - name: Build packages
-        uses: openwrt/gh-action-sdk@v5
+        uses: openwrt/gh-action-sdk@v11
         env:
           ARCH: ${{ matrix.arch }}
           BUILD_LOG: 1
