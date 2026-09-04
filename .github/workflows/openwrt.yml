@@ -128,7 +128,9 @@ jobs:
           ARCH: ${{ matrix.arch }}
           BUILD_LOG: 1
           NO_REFRESH_CHECK: 1
-          PACKAGES: smartdns-rs luci-app-smartdns-rs
+          # The core Makefile lives in contrib/openwrt, so the feed build target
+          # is named "openwrt" while its emitted package remains smartdns-rs.
+          PACKAGES: openwrt luci-app-smartdns-rs
           V: s
 
       - name: Upload packages and logs
