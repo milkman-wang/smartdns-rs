@@ -7,7 +7,7 @@ TEST_ROOT="${TMPDIR:-/tmp}/smartdns-openwrt-test.$$"
 trap 'rm -rf "$TEST_ROOT"' EXIT HUP INT TERM
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-INIT_SCRIPT="$SCRIPT_DIR/../files/etc/init.d/smartdns"
+INIT_SCRIPT="$SCRIPT_DIR/../smartdns-rs/files/etc/init.d/smartdns"
 
 mock_value()
 {
