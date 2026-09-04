@@ -171,17 +171,33 @@ jobs:
           mkdir release
           while IFS= read -r -d '' package; do
             name="$(basename "$package")"
-            if [[ "$name" == *_all.ipk || "$name" == *-all.apk ]]; then
-              test -e "release/$name" || cp "$package" "release/$name"
-            else
-              cp "$package" "release/$name"
-            fi
-          done < <(find artifacts -type f \( -name '*.ipk' -o -name '*.apk' \) -print0)
-          test -n "$(find release -maxdepth 1 -type f -print -quit)"
+            artifact="${package#artifacts/}"
+            artifact="${artifact%%/*}"
+            arch="${artifact#openwrt-}"
+            arch="${arch%-$GITHUB_SHA}"
+
+            case "$name" in
+              smartdns-rs-*.apk)
+                cp "$package" "release/${name%.apk}-$arch.apk"
+                ;;
+              smartdns-rs_*.ipk)
+                cp "$package" "release/$name"
+                ;;
+              luci-app-smartdns-rs-*.apk|luci-i18n-smartdns-rs-zh-cn-*.apk|luci-app-smartdns-rs_*.ipk|luci-i18n-smartdns-rs-zh-cn_*.ipk)
+                test -e "release/$name" || cp "$package" "release/$name"
+                ;;
+            esac
+          done < <(find artifacts -type f -path '*/bin/packages/*/action/*' \( -name '*.ipk' -o -name '*.apk' \) -print0)
+
+          core_count="$(find release -maxdepth 1 -type f \( -name 'smartdns-rs-*.apk' -o -name 'smartdns-rs_*.ipk' \) | wc -l)"
+          test "$core_count" -eq 9
+          test "$(find release -maxdepth 1 -type f \( -name 'luci-app-smartdns-rs-*.apk' -o -name 'luci-app-smartdns-rs_*.ipk' \) | wc -l)" -eq 1
+          test "$(find release -maxdepth 1 -type f \( -name 'luci-i18n-smartdns-rs-zh-cn-*.apk' -o -name 'luci-i18n-smartdns-rs-zh-cn_*.ipk' \) | wc -l)" -eq 1
           (cd release && sha256sum * | sort -k2 > SHA256SUMS)
           printf '%s\n' \
             "Source commit: $GITHUB_SHA" \
             "OpenWrt architectures: aarch64_cortex-a53, aarch64_cortex-a72, aarch64_generic, arm_cortex-a7_neon-vfpv4, arm_cortex-a15_neon-vfpv4, i386_pentium4, mips_24kc, mipsel_24kc, x86_64" \
+            "APK core assets include the OpenWrt architecture in the file name; LuCI packages are architecture-independent." \
             "Install the package format accepted by your firmware (IPK for opkg or APK for apk)." \
             > release-notes.txt
 
