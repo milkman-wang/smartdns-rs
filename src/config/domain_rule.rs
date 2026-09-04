@@ -50,11 +50,17 @@ impl std::ops::AddAssign for DomainRule {
         if rhs.dualstack_ip_selection.is_some() {
             self.dualstack_ip_selection = rhs.dualstack_ip_selection;
         }
+        if rhs.response_mode.is_some() {
+            self.response_mode = rhs.response_mode;
+        }
         if rhs.no_cache.is_some() {
             self.no_cache = rhs.no_cache;
         }
         if rhs.no_serve_expired.is_some() {
             self.no_serve_expired = rhs.no_serve_expired
+        }
+        if rhs.nftset.is_some() {
+            self.nftset = rhs.nftset;
         }
 
         if rhs.rr_ttl.is_some() {
@@ -64,6 +70,6 @@ impl std::ops::AddAssign for DomainRule {
             self.rr_ttl_min = rhs.rr_ttl_min;
         }
 
-        self.rr_ttl_max = rhs.rr_ttl_min.or(self.rr_ttl_max);
+        self.rr_ttl_max = rhs.rr_ttl_max.or(self.rr_ttl_max);
     }
 }

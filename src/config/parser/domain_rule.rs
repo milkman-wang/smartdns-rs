@@ -25,9 +25,21 @@ impl NomParser for DomainRule {
                 },
             ),
             map(
-                parse_value(alt((tag_no_case("nameserver"), tag("n"))), alphanumeric1),
+                parse_value(
+                    alt((tag_no_case("nameserver"), tag("n"))),
+                    map(is_not(" \t\r\n"), ToString::to_string),
+                ),
                 |v| {
-                    rule.nameserver = Some(v.to_string());
+                    rule.nameserver = Some(v);
+                },
+            ),
+            map(
+                parse_value(
+                    alt((tag_no_case("dualstack-ip-selection"), tag("d"))),
+                    bool::parse,
+                ),
+                |v| {
+                    rule.dualstack_ip_selection = Some(v);
                 },
             ),
             map(
@@ -47,6 +59,9 @@ impl NomParser for DomainRule {
             }),
             map(parse_flag(tag_no_case("no-serve-expired")), |v| {
                 rule.no_serve_expired = Some(v);
+            }),
+            map(parse_value(tag_no_case("nftset"), NomParser::parse), |v| {
+                rule.nftset = Some(v);
             }),
             map(
                 parse_value(
@@ -164,6 +179,47 @@ mod tests {
                 DomainRule {
                     no_cache: Some(true),
                     dualstack_ip_selection: Some(true),
+                    ..Default::default()
+                }
+            ))
+        );
+        assert_eq!(
+            DomainRule::parse("-dualstack-ip-selection no"),
+            Ok((
+                "",
+                DomainRule {
+                    dualstack_ip_selection: Some(false),
+                    ..Default::default()
+                }
+            ))
+        );
+        assert_eq!(
+            DomainRule::parse("-nftset #4:ip#fw4#dns4,#6:ip6#fw4#dns6"),
+            Ok((
+                "",
+                DomainRule {
+                    nftset: Some(vec![
+                        ConfigForIP::V4(NFTsetConfig {
+                            family: "ip",
+                            table: "fw4".to_string(),
+                            name: "dns4".to_string(),
+                        }),
+                        ConfigForIP::V6(NFTsetConfig {
+                            family: "ip6",
+                            table: "fw4".to_string(),
+                            name: "dns6".to_string(),
+                        }),
+                    ]),
+                    ..Default::default()
+                }
+            ))
+        );
+        assert_eq!(
+            DomainRule::parse("-nameserver domestic-v4"),
+            Ok((
+                "",
+                DomainRule {
+                    nameserver: Some("domestic-v4".to_string()),
                     ..Default::default()
                 }
             ))

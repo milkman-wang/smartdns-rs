@@ -66,6 +66,10 @@ Please refer to [TODO](https://github.com/mokeyish/smartdns-rs/blob/main/TODO.md
 
 *Nightly builds can be found [here](https://github.com/mokeyish/smartdns-rs/actions/workflows/nightly.yml).*
 
+- OpenWrt
+
+  The repository includes a cross-compilable package, procd/UCI/dnsmasq integration and a native JavaScript LuCI application. See the [OpenWrt integration guide](contrib/openwrt/README.md) for its support matrix and build steps, and the [performance notes](contrib/openwrt/PERFORMANCE.md) for a fair Rust/C comparison.
+
 - MacOS
 
   If you have installed [brew](https://brew.sh/), you can directly use the following command to install.

@@ -1,65 +1,76 @@
-# SPDX-License-Identifier: GPL-2.0-only
-#
-# Copyright (C) 2017-2020 Yousong Zhou <yszhou4tech@gmail.com>
-# Copyright (C) 2021-2023 openwrt.org
+# SPDX-License-Identifier: GPL-3.0-only
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=smartdns-rs
-PKG_VERSION:=0.6.0
+PKG_VERSION:=0.13.1
 PKG_RELEASE:=1
 
-PKG_SOURCE_PROTO:=git
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://github.com/mokeyish/smartdns-rs.git
-PKG_SOURCE_VERSION:=c9695e6530b9494951894df05c1ac9bfaa02f083
-PKG_MIRROR_HASH:=b63d485b82d6f97aebdc3f9e1affe7b4e84e81d40c0c17ae9eb81c4b2a716c5d
+PKG_SOURCE_VERSION:=788e83fa72477ebcf1c6a7f4482359353d29c480
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_SOURCE_VERSION).tar.gz
+PKG_SOURCE_URL:=https://codeload.github.com/mokeyish/smartdns-rs/tar.gz/$(PKG_SOURCE_VERSION)?
+PKG_HASH:=00006dda2b90b5a95fbd8b16cc9cf062d049b1065d665553981ea55d4fe1acb6
+PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_SOURCE_VERSION)
 
-PKG_MAINTAINER:=Zxlhhyccc <zxlhhyccc@gmail.com>
-PKG_LICENSE:=GPL-3.0
+PKG_MAINTAINER:=SmartDNS-rs contributors
+PKG_LICENSE:=GPL-3.0-only
 PKG_LICENSE_FILES:=LICENSE
-
+PKG_BUILD_DEPENDS:=rust/host
 PKG_BUILD_PARALLEL:=1
 
-PKG_BUILD_DEPENDS:=rust/host
+# Avoid desktop-only service management, the resolver CLI, and self-update.
+# The protocol and nftables features below are the OpenWrt runtime surface.
+RUST_PKG_FEATURES:=dns-over-tls,dns-over-https,dns-over-quic,dns-over-h3,mdns,dnssec,nft,nom-recipes-all,http_client,serde
 
 include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 
-define Package/smartdns-rs/Default
-  define Package/smartdns-rs
-    SECTION:=net
-    CATEGORY:=Network
-    SUBMENU:=Web Servers/Proxies
-    TITLE:=smartdns-rust server
-    URL:=https://github.com/mokeyish/smartdns-rs.git
-    DEPENDS:=$$(RUST_ARCH_DEPENDS)
-  endef
+CARGO_PKG_VARS+=SMARTDNS_OPENWRT=1
+CARGO_PKG_ARGS+=--no-default-features
 
-  define Package/smartdns-rs/description
-  A cross platform local DNS server (Dnsmasq like) written in rust to obtain the fastest website IP for the best Internet experience, supports DoT, DoH.
-  endef
-
-  define Package/smartdns-rs/install
-	$$(INSTALL_DIR) $$(1)/usr/sbin
-	$$(INSTALL_BIN) $$(PKG_INSTALL_DIR)/bin/smartdns $$(1)/usr/sbin/
-
-	$$(INSTALL_DIR) $$(1)/etc/init.d
-	$$(INSTALL_BIN) $(CURDIR)/conf/smartdns.init $$(1)/etc/init.d/smartdns
-  endef
+define Package/smartdns-rs
+  SECTION:=net
+  CATEGORY:=Network
+  SUBMENU:=IP Addresses and Names
+  TITLE:=SmartDNS-rs DNS server
+  URL:=https://github.com/milkman-wang/smartdns-rs
+  PROVIDES:=smartdns
+  CONFLICTS:=smartdns
+  DEPENDS:=$(RUST_ARCH_DEPENDS) +ca-bundle
 endef
 
-define smartdns-rs/templates
-  $(foreach smartdns,smartdns,
-    $(call Package/smartdns-rs/Default,smartdns)
-  )
-endef
-$(eval $(call smartdns-rs/templates))
-
-define Build/Compile
-	$(call Build/Compile/Cargo,, smartdns)
+define Package/smartdns-rs/description
+SmartDNS-rs is an asynchronous local DNS server that queries multiple upstream
+resolvers and returns the fastest usable result. This package includes procd,
+UCI, dnsmasq and LuCI-compatible integration for OpenWrt.
 endef
 
-$(foreach smartdns,smartdns, \
-  $(eval $(call BuildPackage,smartdns-rs)) \
-)
+define Package/smartdns-rs/conffiles
+/etc/config/smartdns
+/etc/smartdns/address.conf
+/etc/smartdns/blacklist-ip.conf
+/etc/smartdns/custom.conf
+/etc/smartdns/domain-block.list
+/etc/smartdns/domain-forwarding.list
+endef
+
+define Package/smartdns-rs/install
+	$(INSTALL_DIR) $(1)/usr/sbin
+	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/bin/smartdns $(1)/usr/sbin/smartdns
+
+	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/config $(1)/etc/uci-defaults
+	$(INSTALL_BIN) ./files/etc/init.d/smartdns $(1)/etc/init.d/smartdns
+	$(INSTALL_CONF) ./files/etc/config/smartdns $(1)/etc/config/smartdns
+	$(INSTALL_BIN) ./files/etc/uci-defaults/90-smartdns-rs $(1)/etc/uci-defaults/90-smartdns-rs
+
+	$(INSTALL_DIR) $(1)/etc/smartdns/conf.d $(1)/etc/smartdns/domain-set
+	$(INSTALL_DIR) $(1)/etc/smartdns/ip-set $(1)/etc/smartdns/download
+	$(INSTALL_CONF) ./files/etc/smartdns/address.conf $(1)/etc/smartdns/address.conf
+	$(INSTALL_CONF) ./files/etc/smartdns/blacklist-ip.conf $(1)/etc/smartdns/blacklist-ip.conf
+	$(INSTALL_CONF) ./files/etc/smartdns/custom.conf $(1)/etc/smartdns/custom.conf
+	$(INSTALL_CONF) ./files/etc/smartdns/domain-block.list $(1)/etc/smartdns/domain-block.list
+	$(INSTALL_CONF) ./files/etc/smartdns/domain-forwarding.list $(1)/etc/smartdns/domain-forwarding.list
+endef
+
+$(eval $(call RustBinPackage,smartdns-rs))
+$(eval $(call BuildPackage,smartdns-rs))
