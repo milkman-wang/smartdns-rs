@@ -48,7 +48,7 @@ ensure_layout()
 		"$IP_SET_DIR" "$DOWNLOAD_DIR" "$LOG_DIR"
 	touch "$ADDRESS_CONF" "$BLACKLIST_CONF" "$CUSTOM_CONF" \
 		"$FORWARDING_LIST" "$BLOCK_LIST"
-	if id -u nobody >/dev/null 2>&1; then
+	if [ "$(id -u)" = "0" ] && id -u nobody >/dev/null 2>&1; then
 		chown nobody "$RUNTIME_DIR" "$LOG_DIR"
 	fi
 }
@@ -71,7 +71,7 @@ prepare_writable_file()
 	fi
 	mkdir -p "$directory" || return 1
 	touch "$path" || return 1
-	if id -u nobody >/dev/null 2>&1; then
+	if [ "$(id -u)" = "0" ] && id -u nobody >/dev/null 2>&1; then
 		chown nobody "$path"
 	fi
 }

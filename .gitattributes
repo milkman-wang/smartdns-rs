@@ -1,1 +1,6 @@
-contrib/openwrt/patches/*.patch whitespace=-blank-at-eol
+*.sh text eol=lf
+*.yml text eol=lf
+contrib/openwrt/files/etc/init.d/* text eol=lf
+contrib/openwrt/files/etc/uci-defaults/* text eol=lf
+contrib/openwrt/luci-app-smartdns-rs/root/usr/libexec/* text eol=lf
+contrib/openwrt/patches/*.patch text eol=lf whitespace=-blank-at-eol
