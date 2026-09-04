@@ -47,7 +47,8 @@ git clone https://github.com/openwrt/openwrt.git
 cd openwrt
 ./scripts/feeds update -a
 ./scripts/feeds install -a
-cp -a /path/to/smartdns-rs/contrib/openwrt package/smartdns-rs
+cp -a /path/to/smartdns-rs/contrib/openwrt/smartdns-rs package/smartdns-rs
+cp -a /path/to/smartdns-rs/contrib/openwrt/luci-app-smartdns-rs package/luci-app-smartdns-rs
 make defconfig
 make package/smartdns-rs/compile V=s
 make package/luci-app-smartdns-rs/compile V=s
@@ -105,8 +106,8 @@ apk 固件使用对应的 `apk add --allow-untrusted` 安装命令。默认情�
 python3 contrib/openwrt/tests/check_contract.py
 sh contrib/openwrt/tests/generate_config.sh
 sh contrib/openwrt/tests/dnsmasq_state.sh
-shellcheck -s sh contrib/openwrt/files/etc/init.d/smartdns \
-  contrib/openwrt/files/etc/uci-defaults/90-smartdns-rs \
+shellcheck -s sh contrib/openwrt/smartdns-rs/files/etc/init.d/smartdns \
+  contrib/openwrt/smartdns-rs/files/etc/uci-defaults/90-smartdns-rs \
   contrib/openwrt/luci-app-smartdns-rs/root/usr/libexec/smartdns-rs-call \
   contrib/openwrt/tests/generate_config.sh \
   contrib/openwrt/tests/dnsmasq_state.sh

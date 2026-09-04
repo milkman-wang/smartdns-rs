@@ -16,7 +16,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 OPENWRT = ROOT / "contrib" / "openwrt"
-INIT = OPENWRT / "files" / "etc" / "init.d" / "smartdns"
+CORE = OPENWRT / "smartdns-rs"
+INIT = CORE / "files" / "etc" / "init.d" / "smartdns"
 LUCI = (
     OPENWRT
     / "luci-app-smartdns-rs"
@@ -290,7 +291,7 @@ def check_luci_validation() -> None:
 
 def check_features() -> None:
     cargo = load(ROOT / "Cargo.toml")
-    package = load(OPENWRT / "Makefile")
+    package = load(CORE / "Makefile")
     build_script = load(ROOT / "build.rs")
     feature_match = re.search(r"^openwrt\s*=\s*\[([^]]+)\]", cargo, re.MULTILINE)
     if not feature_match:

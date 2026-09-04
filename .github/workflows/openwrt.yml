@@ -77,8 +77,8 @@ jobs:
       - name: Check shell
         run: |
           shellcheck -s sh \
-            contrib/openwrt/files/etc/init.d/smartdns \
-            contrib/openwrt/files/etc/uci-defaults/90-smartdns-rs \
+            contrib/openwrt/smartdns-rs/files/etc/init.d/smartdns \
+            contrib/openwrt/smartdns-rs/files/etc/uci-defaults/90-smartdns-rs \
             contrib/openwrt/luci-app-smartdns-rs/root/usr/libexec/smartdns-rs-call \
             contrib/openwrt/tests/generate_config.sh \
             contrib/openwrt/tests/dnsmasq_state.sh
@@ -119,7 +119,7 @@ jobs:
       - name: Set monotonic package revision
         shell: bash
         run: |
-          sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${GITHUB_RUN_NUMBER}/" contrib/openwrt/Makefile
+          sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${GITHUB_RUN_NUMBER}/" contrib/openwrt/smartdns-rs/Makefile
           sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${GITHUB_RUN_NUMBER}/" contrib/openwrt/luci-app-smartdns-rs/Makefile
 
       - name: Build packages
@@ -128,9 +128,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
           BUILD_LOG: 1
           NO_REFRESH_CHECK: 1
-          # The core Makefile lives in contrib/openwrt, so the feed build target
-          # is named "openwrt" while its emitted package remains smartdns-rs.
-          PACKAGES: openwrt luci-app-smartdns-rs
+          PACKAGES: smartdns-rs luci-app-smartdns-rs
           V: s
 
       - name: Upload packages and logs

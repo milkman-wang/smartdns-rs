@@ -286,7 +286,7 @@ def build(repo: Path, output: Path, cache: Path) -> list[Path]:
     with tempfile.TemporaryDirectory(prefix="smartdns-data-") as temporary:
         root = Path(temporary)
         copy_file(binary, root, "/usr/sbin/smartdns", 0o755)
-        files = repo / "contrib/openwrt/files"
+        files = repo / "contrib/openwrt/smartdns-rs/files"
         for source in files.rglob("*"):
             if source.is_file():
                 relative = source.relative_to(files).as_posix()
