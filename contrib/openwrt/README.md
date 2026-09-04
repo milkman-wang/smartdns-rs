@@ -123,7 +123,7 @@ Fork 的 `Sync upstream` 工作流每天检查一次 `mokeyish/smartdns-rs` 的 
 1. 用普通 Git merge 合并上游，遇到冲突立即失败，不强行覆盖 OpenWrt 适配；
 2. 更新 OpenWrt Makefile 固定的上游提交、源码 SHA-256 和 Cargo 版本；
 3. 推送 Fork 的 `main` 并调度九架构构建；
-4. 仅在契约测试和所有 SDK 架构全部成功后创建 GitHub Release，同时生成 `SHA256SUMS`。Release 只包含本项目的主包、LuCI 和简体中文翻译，不包含 SDK 下载的依赖包；APK 主包文件名会附加 OpenWrt 架构，避免不同架构相互覆盖。
+4. 仅在契约测试和所有 SDK 架构全部成功后创建 GitHub Release，同时生成 `SHA256SUMS`。Release 只包含本项目的主包、LuCI 和简体中文翻译，不包含 SDK 下载的依赖包；APK 主包文件名会附加 OpenWrt 架构，避免不同架构相互覆盖。发布文件名中的 `~` 会规范为 `.`，与 GitHub 实际保存的附件名及校验清单保持一致。
 
 Action 的运行编号会成为单调递增的 `PKG_RELEASE`，因此同一个 SmartDNS-rs 版本内的后续自动包也能被包管理器识别为升级。OpenWrt 25.12/snapshot 可能生成 APK，仍使用 opkg 的派生固件应安装 Release 中的 IPK；最终格式以对应 SDK 的输出为准。
 
