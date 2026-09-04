@@ -34,16 +34,13 @@ impl NomParser for DomainRule {
                 },
             ),
             map(
-                parse_value(
-                    alt((tag_no_case("dualstack-ip-selection"), tag("d"))),
-                    bool::parse,
-                ),
-                |v| {
-                    rule.dualstack_ip_selection = Some(v);
-                },
-            ),
-            map(
-                parse_flag(alt((tag_no_case("dualstack-ip-selection"), tag("d")))),
+                alt((
+                    parse_value(
+                        alt((tag_no_case("dualstack-ip-selection"), tag("d"))),
+                        bool::parse,
+                    ),
+                    parse_flag(alt((tag_no_case("dualstack-ip-selection"), tag("d")))),
+                )),
                 |v| {
                     rule.dualstack_ip_selection = Some(v);
                 },

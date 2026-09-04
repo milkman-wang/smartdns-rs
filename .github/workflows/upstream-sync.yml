@@ -55,7 +55,7 @@ jobs:
           from pathlib import Path
 
           source_sha, source_hash, version = sys.argv[1:]
-          package = Path("contrib/openwrt/Makefile")
+          package = Path("contrib/openwrt/smartdns-rs/Makefile")
           text = package.read_text(encoding="utf-8")
           text = re.sub(r"^PKG_VERSION:=.*$", f"PKG_VERSION:={version}", text, flags=re.MULTILINE)
           text = re.sub(r"^PKG_SOURCE_VERSION:=.*$", f"PKG_SOURCE_VERSION:={source_sha}", text, flags=re.MULTILINE)

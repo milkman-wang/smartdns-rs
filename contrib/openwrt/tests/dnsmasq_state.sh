@@ -81,7 +81,7 @@ uci()
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=/dev/null
-. "$SCRIPT_DIR/../files/etc/init.d/smartdns"
+. "$SCRIPT_DIR/../smartdns-rs/files/etc/init.d/smartdns"
 
 assert_value()
 {

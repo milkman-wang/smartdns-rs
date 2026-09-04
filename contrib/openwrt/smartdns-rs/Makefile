@@ -23,6 +23,14 @@ PKG_BUILD_PARALLEL:=1
 RUST_PKG_FEATURES:=dns-over-tls,dns-over-https,dns-over-quic,dns-over-h3,mdns,dnssec,nft,nom-recipes-all,http_client,serde
 
 include $(INCLUDE_DIR)/package.mk
+
+# OpenWrt's pentium4 target is compiled through Rust's i586 target, whose
+# conservative defaults omit SSE/SSE2. Pentium 4 guarantees both, and ring
+# requires them on 32-bit x86.
+ifeq ($(ARCH),i386)
+  RUSTC_TARGET_RUSTFLAGS+=-Ctarget-feature=+sse,+sse2
+endif
+
 include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 
 CARGO_PKG_VARS+=SMARTDNS_OPENWRT=1
