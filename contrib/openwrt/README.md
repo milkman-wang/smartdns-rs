@@ -6,8 +6,8 @@
 
 - 目标：当前 OpenWrt release/snapshot，使用 `procd`、`ucode`/JavaScript LuCI 和 firewall4/nftables。
 - 架构：以 OpenWrt Rust feed 的 `RUST_ARCH_DEPENDS` 为准。小闪存和 32 位低内存设备需要先核对包体与内存。
-- CI 使用 OpenWrt snapshot SDK 构建 `aarch64_cortex-a53`、`aarch64_cortex-a72`、`aarch64_generic`、`arm_cortex-a7_neon-vfpv4`、`arm_cortex-a15_neon-vfpv4`、`i386_pentium4`、`mips_24kc`、`mipsel_24kc` 和 `x86_64`。每个架构都真正交叉编译 Rust 二进制，不会只修改包名。
-- 编译器：锁定源码声明的最低版本是 Rust 1.96；当前 OpenWrt packages master 正好提供 1.96。旧 release feed 通常不能直接编译。
+- CI 对 `aarch64_cortex-a53`、`aarch64_cortex-a72`、`aarch64_generic`、`arm_cortex-a7_neon-vfpv4`、`arm_cortex-a15_neon-vfpv4`、`i386_pentium4`、`mips_24kc`、`mipsel_24kc` 和 `x86_64` 分别运行 OpenWrt snapshot 与 24.10.7 SDK。每个架构都真正交叉编译 Rust 二进制，同时发布供 `apk` 使用的 APK 和供 `opkg` 使用的 IPK，不会只修改扩展名。
+- 编译器：上游清单声明 Rust 1.96，snapshot 的 packages master 正好提供 1.96。OpenWrt 24.10 feed 当前提供 Rust 1.94；IPK 矩阵只绕过 Cargo 的清单版本门槛，仍逐架构完成真实编译。若未来上游使用 1.95/1.96 才有的语言或库 API，IPK 构建会明确失败并阻止发布。
 - 默认监听 `6053`，由 dnsmasq 转发；只有显式设置端口 `53` 才停用 dnsmasq 的 DNS 端口。停止 SmartDNS-rs 后会恢复被本脚本修改的 dnsmasq 值。
 - 首次安装保持禁用，先在 LuCI 检查上游和端口，再启用服务。
 
@@ -122,9 +122,9 @@ Fork 的 `Sync upstream` 工作流每天检查一次 `mokeyish/smartdns-rs` 的 
 
 1. 用普通 Git merge 合并上游，遇到冲突立即失败，不强行覆盖 OpenWrt 适配；
 2. 更新 OpenWrt Makefile 固定的上游提交、源码 SHA-256 和 Cargo 版本；
-3. 推送 Fork 的 `main` 并调度九架构构建；
-4. 仅在契约测试和所有 SDK 架构全部成功后创建 GitHub Release，同时生成 `SHA256SUMS`。Release 只包含本项目的主包、LuCI 和简体中文翻译，不包含 SDK 下载的依赖包；APK 主包文件名会附加 OpenWrt 架构，避免不同架构相互覆盖。发布文件名中的 `~` 会规范为 `.`，与 GitHub 实际保存的附件名及校验清单保持一致。
+3. 推送 Fork 的 `main` 并调度九架构的 APK/IPK 双格式构建；
+4. 仅在契约测试、九个 snapshot APK 架构和九个 OpenWrt 24.10.7 IPK 架构全部成功后创建 GitHub Release，同时生成 `SHA256SUMS`。Release 只包含本项目的主包、LuCI 和简体中文翻译，不包含 SDK 下载的依赖包；APK 主包文件名会附加 OpenWrt 架构，避免不同架构相互覆盖。发布文件名中的 `~` 会规范为 `.`，与 GitHub 实际保存的附件名及校验清单保持一致。
 
-Action 的运行编号会成为单调递增的 `PKG_RELEASE`，因此同一个 SmartDNS-rs 版本内的后续自动包也能被包管理器识别为升级。OpenWrt 25.12/snapshot 可能生成 APK，仍使用 opkg 的派生固件应安装 Release 中的 IPK；最终格式以对应 SDK 的输出为准。
+Action 的运行编号会成为单调递增的 `PKG_RELEASE`，因此同一个 SmartDNS-rs 版本内的后续自动包也能被包管理器识别为升级。OpenWrt 25.12/snapshot 使用 APK；OpenWrt 24.10 以及仍使用 opkg 的兼容固件应安装 Release 中的 IPK。两个矩阵使用各自的官方 SDK 构建，包格式不能混装。
 
 GitHub 默认会禁用新 Fork 的定时工作流，首次创建 Fork 后需要在 Actions 页面启用一次。也可以手动运行 `Sync upstream` 或 `OpenWrt packages` 工作流。

@@ -137,9 +137,70 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-${{ matrix.arch }}-${{ github.sha }}
+          name: openwrt-apk-${{ matrix.arch }}-${{ github.sha }}
           path: |
             bin/packages/**/*.apk
+            bin/packages/**/*.ipk
+            logs/**
+          if-no-files-found: error
+          retention-days: 14
+
+  sdk_ipk:
+    name: OpenWrt 24.10 IPK (${{ matrix.arch }})
+    needs: contract
+    runs-on: ubuntu-latest
+    # The 24.10 package feed currently builds Rust from source. Keep the same
+    # allowance as the snapshot matrix for slower 32-bit targets.
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - aarch64_cortex-a53
+          - aarch64_cortex-a72
+          - aarch64_generic
+          - arm_cortex-a7_neon-vfpv4
+          - arm_cortex-a15_neon-vfpv4
+          - i386_pentium4
+          - mips_24kc
+          - mipsel_24kc
+          - x86_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set monotonic package revision
+        shell: bash
+        run: |
+          sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${GITHUB_RUN_NUMBER}/" contrib/openwrt/smartdns-rs/Makefile
+          sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${GITHUB_RUN_NUMBER}/" contrib/openwrt/luci-app-smartdns-rs/Makefile
+
+      - name: Allow the OpenWrt 24.10 Rust toolchain
+        shell: bash
+        run: |
+          # The 24.10 feed has Rust 1.94 while upstream declares 1.96. Cargo
+          # still reports real compiler/API errors; this only bypasses the
+          # manifest's version gate and is verified by compiling every target.
+          sed -i '/CARGO_PKG_ARGS+=--no-default-features/a CARGO_PKG_ARGS+=--ignore-rust-version' \
+            contrib/openwrt/smartdns-rs/Makefile
+
+      - name: Build IPK packages
+        uses: openwrt/gh-action-sdk@v11
+        env:
+          ARCH: ${{ matrix.arch }}-24.10.7
+          BUILD_LOG: 1
+          NO_REFRESH_CHECK: 1
+          PACKAGES: smartdns-rs luci-app-smartdns-rs
+          V: s
+
+      - name: Upload packages and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-ipk-${{ matrix.arch }}-${{ github.sha }}
+          path: |
             bin/packages/**/*.ipk
             logs/**
           if-no-files-found: error
@@ -150,6 +211,7 @@ jobs:
     needs:
       - contract
       - sdk
+      - sdk_ipk
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && inputs.publish)
@@ -174,7 +236,11 @@ jobs:
             safe_name="${name//\~/.}"
             artifact="${package#artifacts/}"
             artifact="${artifact%%/*}"
-            arch="${artifact#openwrt-}"
+            case "$artifact" in
+              openwrt-apk-*) arch="${artifact#openwrt-apk-}" ;;
+              openwrt-ipk-*) arch="${artifact#openwrt-ipk-}" ;;
+              *) continue ;;
+            esac
             arch="${arch%-$GITHUB_SHA}"
 
             case "$name" in
@@ -190,16 +256,19 @@ jobs:
             esac
           done < <(find artifacts -type f -path '*/bin/packages/*/action/*' \( -name '*.ipk' -o -name '*.apk' \) -print0)
 
-          core_count="$(find release -maxdepth 1 -type f \( -name 'smartdns-rs-*.apk' -o -name 'smartdns-rs_*.ipk' \) | wc -l)"
-          test "$core_count" -eq 9
-          test "$(find release -maxdepth 1 -type f \( -name 'luci-app-smartdns-rs-*.apk' -o -name 'luci-app-smartdns-rs_*.ipk' \) | wc -l)" -eq 1
-          test "$(find release -maxdepth 1 -type f \( -name 'luci-i18n-smartdns-rs-zh-cn-*.apk' -o -name 'luci-i18n-smartdns-rs-zh-cn_*.ipk' \) | wc -l)" -eq 1
+          test "$(find release -maxdepth 1 -type f -name 'smartdns-rs-*.apk' | wc -l)" -eq 9
+          test "$(find release -maxdepth 1 -type f -name 'smartdns-rs_*.ipk' | wc -l)" -eq 9
+          test "$(find release -maxdepth 1 -type f -name 'luci-app-smartdns-rs-*.apk' | wc -l)" -eq 1
+          test "$(find release -maxdepth 1 -type f -name 'luci-app-smartdns-rs_*.ipk' | wc -l)" -eq 1
+          test "$(find release -maxdepth 1 -type f -name 'luci-i18n-smartdns-rs-zh-cn-*.apk' | wc -l)" -eq 1
+          test "$(find release -maxdepth 1 -type f -name 'luci-i18n-smartdns-rs-zh-cn_*.ipk' | wc -l)" -eq 1
           (cd release && sha256sum * | sort -k2 > SHA256SUMS)
           printf '%s\n' \
             "Source commit: $GITHUB_SHA" \
             "OpenWrt architectures: aarch64_cortex-a53, aarch64_cortex-a72, aarch64_generic, arm_cortex-a7_neon-vfpv4, arm_cortex-a15_neon-vfpv4, i386_pentium4, mips_24kc, mipsel_24kc, x86_64" \
+            "APK packages target current OpenWrt snapshots; IPK packages target OpenWrt 24.10.7." \
             "APK core assets include the OpenWrt architecture in the file name; LuCI packages are architecture-independent." \
-            "Install the package format accepted by your firmware (IPK for opkg or APK for apk)." \
+            "Use IPK with opkg firmware and APK with apk firmware; package formats are not interchangeable." \
             > release-notes.txt
 
       - name: Create or update GitHub Release
