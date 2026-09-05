@@ -38,8 +38,21 @@ impl PartialEq for LookupError {
 }
 
 impl LookupError {
+    pub fn is_no_records_found(&self) -> bool {
+        matches!(self, Self::Proto(err) if matches!(err.kind(), ProtoErrorKind::NoRecordsFound(_)))
+    }
+
     pub fn is_nx_domain(&self) -> bool {
         matches!(self, Self::ResponseCode(resc) if resc.eq(&ResponseCode::NXDomain))
+            || matches!(
+                self,
+                Self::Proto(err)
+                    if matches!(
+                        err.kind(),
+                        ProtoErrorKind::NoRecordsFound(NoRecords { response_code, .. })
+                            if response_code == &ResponseCode::NXDomain
+                    )
+            )
     }
 
     #[inline]
@@ -65,6 +78,22 @@ impl LookupError {
         None
     }
 
+    pub fn as_no_records_response(&self, query: &Query) -> Option<DnsResponse> {
+        if let Self::Proto(err) = self
+            && let ProtoErrorKind::NoRecordsFound(NoRecords {
+                soa, response_code, ..
+            }) = err.kind()
+        {
+            let mut response = DnsResponse::new_with_max_ttl(query.to_owned(), Vec::new());
+            response.set_response_code(*response_code);
+            if let Some(record) = soa {
+                response.add_authority(record.as_ref().to_owned().into_record_of_rdata());
+            }
+            return Some(response);
+        }
+        None
+    }
+
     pub fn no_records_found(query: Query, ttl: u32) -> LookupError {
         let soa = Record::from_rdata(query.name().to_owned(), ttl, SOA::default_soa());
 
@@ -85,5 +114,30 @@ impl From<ResponseCode> for LookupError {
 impl From<ProtoErrorKind> for LookupError {
     fn from(value: ProtoErrorKind) -> Self {
         Self::Proto(value.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::libdns::proto::rr::{Name, RecordType};
+    use std::str::FromStr as _;
+
+    #[test]
+    fn no_records_without_soa_becomes_an_empty_success_response() {
+        let query = Query::query(
+            Name::from_str("no-https-record.example.").unwrap(),
+            RecordType::HTTPS,
+        );
+        let authority = AuthorityData::new(Box::new(query.clone()), None, true, false, None);
+        let err: LookupError = ProtoErrorKind::NoRecordsFound(authority.into()).into();
+
+        let response = err
+            .as_no_records_response(&query)
+            .expect("NoRecordsFound should produce a DNS response even without an SOA");
+
+        assert_eq!(response.response_code(), ResponseCode::NoError);
+        assert!(response.answers().is_empty());
+        assert!(response.authorities().is_empty());
     }
 }

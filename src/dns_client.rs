@@ -352,6 +352,49 @@ impl Default for LookupOptions {
 mod name_server_group {
     use super::*;
 
+    pub(super) async fn select_response<F>(
+        mut tasks: Vec<F>,
+        prefer_nonempty: bool,
+    ) -> Result<DnsResponse, LookupError>
+    where
+        F: std::future::Future<Output = Result<DnsResponse, LookupError>> + Unpin,
+    {
+        use futures_util::future::select_all;
+
+        let mut empty_response = None;
+        let mut no_records_error = None;
+        let mut last_error = None;
+
+        loop {
+            let (res, _idx, rest) = select_all(tasks).await;
+
+            match res {
+                Ok(response) if !response.records().is_empty() => return Ok(response),
+                Ok(response) if !prefer_nonempty => return Ok(response),
+                Ok(response) => {
+                    empty_response.get_or_insert(response);
+                }
+                Err(err) if err.is_no_records_found() && !prefer_nonempty => return Err(err),
+                Err(err) if err.is_no_records_found() => {
+                    no_records_error.get_or_insert(err);
+                }
+                Err(err) => last_error = Some(err),
+            }
+
+            if rest.is_empty() {
+                if let Some(response) = empty_response {
+                    return Ok(response);
+                }
+                if let Some(err) = no_records_error {
+                    return Err(err);
+                }
+                return Err(last_error.expect("at least one lookup completed"));
+            }
+
+            tasks = rest;
+        }
+    }
+
     #[derive(Default)]
     pub struct NameServerGroup {
         pub resolver_opts: Arc<ResolverOpts>,
@@ -396,26 +439,16 @@ mod name_server_group {
             name: N,
             options: O,
         ) -> Result<DnsResponse, LookupError> {
-            use futures_util::future::select_all;
             let name = name.into_name()?;
-            let mut tasks = self
+            let options: LookupOptions = options.into();
+            let prefer_nonempty = options.record_type.is_ip_addr();
+            let tasks = self
                 .servers
                 .iter()
                 .map(|ns| GenericResolver::lookup(ns.as_ref(), name.clone(), options.clone()))
                 .collect::<Vec<_>>();
 
-            loop {
-                let (res, _idx, rest) = select_all(tasks).await;
-
-                if matches!(res.as_ref(), Ok(lookup) if !lookup.records().is_empty()) {
-                    return res;
-                }
-
-                if rest.is_empty() {
-                    return res;
-                }
-                tasks = rest;
-            }
+            select_response(tasks, prefer_nonempty).await
         }
     }
 }
@@ -863,11 +896,111 @@ mod tests {
     use super::*;
     use crate::{
         dns_url::DnsUrl,
+        libdns::proto::{AuthorityData, ProtoErrorKind, op::ResponseCode},
         preset_ns::{ALIDNS, CLOUDFLARE},
         third_ext::{FutureJoinAllExt, FutureTimeoutExt},
     };
     use std::net::IpAddr;
     use std::str::FromStr;
+
+    #[tokio::test]
+    async fn test_nameserver_group_preserves_empty_response_over_late_error() {
+        use futures_util::FutureExt as _;
+        use tokio::time::{Duration, sleep};
+
+        let query = Query::query(
+            Name::from_str("no-https-record.example.").unwrap(),
+            RecordType::HTTPS,
+        );
+        let empty_response = DnsResponse::new_with_max_ttl(query, Vec::new());
+        let tasks = vec![
+            async move {
+                sleep(Duration::from_millis(1)).await;
+                Ok(empty_response)
+            }
+            .boxed(),
+            async move {
+                sleep(Duration::from_millis(10)).await;
+                Err(ProtoErrorKind::Timeout.into())
+            }
+            .boxed(),
+        ];
+
+        let response = super::name_server_group::select_response(tasks, true)
+            .await
+            .expect("a valid empty response must not be replaced by a later timeout");
+
+        assert!(response.records().is_empty());
+        assert_eq!(response.response_code(), ResponseCode::NoError);
+    }
+
+    #[tokio::test]
+    async fn test_nameserver_group_returns_non_ip_nodata_without_waiting_for_timeout() {
+        use futures_util::FutureExt as _;
+        use tokio::time::{Duration, sleep, timeout};
+
+        let query = Query::query(
+            Name::from_str("no-https-record.example.").unwrap(),
+            RecordType::HTTPS,
+        );
+        let tasks = vec![
+            async move {
+                sleep(Duration::from_millis(1)).await;
+                let authority = AuthorityData::new(Box::new(query), None, true, false, None);
+                Err(ProtoErrorKind::NoRecordsFound(authority.into()).into())
+            }
+            .boxed(),
+            async move {
+                sleep(Duration::from_secs(1)).await;
+                Err(ProtoErrorKind::Timeout.into())
+            }
+            .boxed(),
+        ];
+
+        let err = timeout(
+            Duration::from_millis(100),
+            super::name_server_group::select_response(tasks, false),
+        )
+        .await
+        .expect("a valid NODATA response should return before another server times out")
+        .expect_err("the result should remain a no-records response");
+
+        assert!(err.is_no_records_found());
+    }
+
+    #[tokio::test]
+    async fn test_nameserver_group_returns_non_ip_nxdomain_without_waiting_for_timeout() {
+        use futures_util::FutureExt as _;
+        use tokio::time::{Duration, sleep, timeout};
+
+        let query = Query::query(
+            Name::from_str("missing.example.").unwrap(),
+            RecordType::HTTPS,
+        );
+        let tasks = vec![
+            async move {
+                sleep(Duration::from_millis(1)).await;
+                let authority = AuthorityData::new(Box::new(query), None, true, true, None);
+                Err(ProtoErrorKind::NoRecordsFound(authority.into()).into())
+            }
+            .boxed(),
+            async move {
+                sleep(Duration::from_secs(1)).await;
+                Err(ProtoErrorKind::Timeout.into())
+            }
+            .boxed(),
+        ];
+
+        let err = timeout(
+            Duration::from_millis(100),
+            super::name_server_group::select_response(tasks, false),
+        )
+        .await
+        .expect("an NXDOMAIN response should return before another server times out")
+        .expect_err("the result should remain NXDOMAIN");
+
+        assert!(err.is_nx_domain());
+    }
 
     #[tokio::test]
     async fn test_with_default() {

@@ -402,8 +402,8 @@ async fn process(
                                                 .set_response_code(ResponseCode::NXDomain);
                                         }
                                         let original = request.query().original();
-                                        match e.as_soa(original) {
-                                            Some(soa) => soa,
+                                        match e.as_no_records_response(original) {
+                                            Some(response) => response,
                                             None => {
                                                 log::debug!(
                                                     "{}Response: error resolving: {}, Duration: {:?}",
