@@ -309,8 +309,13 @@ def check_features() -> None:
         )
     if "CARGO_PKG_VARS+=SMARTDNS_OPENWRT=1" not in package:
         fail("OpenWrt package does not select the SDK-only build.rs path")
-    if "$(filter i386%,$(ARCH) $(ARCH_PACKAGES))" not in package:
-        fail("OpenWrt package does not enable SSE/SSE2 for both SDK generations")
+    rust_include = "include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk"
+    sse_condition = "ifeq ($(RUSTC_TARGET_ARCH),i586-unknown-linux-musl)"
+    if (
+        sse_condition not in package
+        or package.index(sse_condition) < package.index(rust_include)
+    ):
+        fail("OpenWrt package does not enable SSE/SSE2 after resolving the Rust target")
     if 'env::var_os("SMARTDNS_OPENWRT")' not in build_script:
         fail("build.rs does not implement the OpenWrt SDK-only path")
 

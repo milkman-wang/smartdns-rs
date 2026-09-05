@@ -24,14 +24,15 @@ RUST_PKG_FEATURES:=dns-over-tls,dns-over-https,dns-over-quic,dns-over-h3,mdns,dn
 
 include $(INCLUDE_DIR)/package.mk
 
+include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
+
 # OpenWrt's pentium4 target is compiled through Rust's i586 target, whose
-# conservative defaults omit SSE/SSE2. Pentium 4 guarantees both, and ring
-# requires them on 32-bit x86.
-ifneq ($(filter i386%,$(ARCH) $(ARCH_PACKAGES)),)
+# conservative defaults omit SSE/SSE2. Test the resolved Rust target after
+# rust-package.mk has loaded rust-values.mk; ARCH is not available early enough
+# in every supported SDK generation.
+ifeq ($(RUSTC_TARGET_ARCH),i586-unknown-linux-musl)
   RUSTC_TARGET_RUSTFLAGS+=-Ctarget-feature=+sse,+sse2
 endif
-
-include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 
 CARGO_PKG_VARS+=SMARTDNS_OPENWRT=1
 CARGO_PKG_ARGS+=--no-default-features
