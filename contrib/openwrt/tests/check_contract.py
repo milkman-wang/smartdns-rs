@@ -309,6 +309,8 @@ def check_features() -> None:
         )
     if "CARGO_PKG_VARS+=SMARTDNS_OPENWRT=1" not in package:
         fail("OpenWrt package does not select the SDK-only build.rs path")
+    if "$(filter i386%,$(ARCH) $(ARCH_PACKAGES))" not in package:
+        fail("OpenWrt package does not enable SSE/SSE2 for both SDK generations")
     if 'env::var_os("SMARTDNS_OPENWRT")' not in build_script:
         fail("build.rs does not implement the OpenWrt SDK-only path")
 

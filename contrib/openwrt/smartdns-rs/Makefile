@@ -27,7 +27,7 @@ include $(INCLUDE_DIR)/package.mk
 # OpenWrt's pentium4 target is compiled through Rust's i586 target, whose
 # conservative defaults omit SSE/SSE2. Pentium 4 guarantees both, and ring
 # requires them on 32-bit x86.
-ifeq ($(ARCH),i386)
+ifneq ($(filter i386%,$(ARCH) $(ARCH_PACKAGES)),)
   RUSTC_TARGET_RUSTFLAGS+=-Ctarget-feature=+sse,+sse2
 endif
 
