@@ -314,6 +314,7 @@ def check_features() -> None:
     if (
         sse_condition not in package
         or package.index(sse_condition) < package.index(rust_include)
+        or "CARGO_RUSTFLAGS+=-Ctarget-feature=+sse,+sse2" not in package
     ):
         fail("OpenWrt package does not enable SSE/SSE2 after resolving the Rust target")
     if 'env::var_os("SMARTDNS_OPENWRT")' not in build_script:

@@ -6,10 +6,10 @@ PKG_NAME:=smartdns-rs
 PKG_VERSION:=0.13.1
 PKG_RELEASE:=1
 
-PKG_SOURCE_VERSION:=788e83fa72477ebcf1c6a7f4482359353d29c480
+PKG_SOURCE_VERSION:=98b299ae46afc2c38be458dcce9a8ce119b00f6b
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_SOURCE_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/mokeyish/smartdns-rs/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=00006dda2b90b5a95fbd8b16cc9cf062d049b1065d665553981ea55d4fe1acb6
+PKG_SOURCE_URL:=https://codeload.github.com/milkman-wang/smartdns-rs/tar.gz/$(PKG_SOURCE_VERSION)?
+PKG_HASH:=ffb9b8f51d23885c585ffb8225743fe530a0c28a3d6e351229246c2c8c6f8ec4
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_SOURCE_VERSION)
 
 PKG_MAINTAINER:=SmartDNS-rs contributors
@@ -31,7 +31,7 @@ include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 # rust-package.mk has loaded rust-values.mk; ARCH is not available early enough
 # in every supported SDK generation.
 ifeq ($(RUSTC_TARGET_ARCH),i586-unknown-linux-musl)
-  RUSTC_TARGET_RUSTFLAGS+=-Ctarget-feature=+sse,+sse2
+  CARGO_RUSTFLAGS+=-Ctarget-feature=+sse,+sse2
 endif
 
 CARGO_PKG_VARS+=SMARTDNS_OPENWRT=1

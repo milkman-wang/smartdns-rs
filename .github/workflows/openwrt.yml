@@ -37,7 +37,7 @@ permissions:
 
 concurrency:
   group: openwrt-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
   contract:
@@ -118,6 +118,23 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Pin package source to this revision
+        env:
+          SOURCE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          archive="$(mktemp)"
+          curl --fail --location --retry 3 \
+            --output "$archive" \
+            "https://codeload.github.com/${SOURCE_REPOSITORY}/tar.gz/${SOURCE_REVISION}"
+          source_hash="$(sha256sum "$archive" | cut -d' ' -f1)"
+          sed -i \
+            -e "s|^PKG_SOURCE_VERSION:=.*|PKG_SOURCE_VERSION:=${SOURCE_REVISION}|" \
+            -e "s|^PKG_SOURCE_URL:=.*|PKG_SOURCE_URL:=https://codeload.github.com/${SOURCE_REPOSITORY}/tar.gz/\$(PKG_SOURCE_VERSION)?|" \
+            -e "s|^PKG_HASH:=.*|PKG_HASH:=${source_hash}|" \
+            contrib/openwrt/smartdns-rs/Makefile
+
       - name: Set monotonic package revision
         shell: bash
         run: |
@@ -170,6 +187,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Pin package source to this revision
+        env:
+          SOURCE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          archive="$(mktemp)"
+          curl --fail --location --retry 3 \
+            --output "$archive" \
+            "https://codeload.github.com/${SOURCE_REPOSITORY}/tar.gz/${SOURCE_REVISION}"
+          source_hash="$(sha256sum "$archive" | cut -d' ' -f1)"
+          sed -i \
+            -e "s|^PKG_SOURCE_VERSION:=.*|PKG_SOURCE_VERSION:=${SOURCE_REVISION}|" \
+            -e "s|^PKG_SOURCE_URL:=.*|PKG_SOURCE_URL:=https://codeload.github.com/${SOURCE_REPOSITORY}/tar.gz/\$(PKG_SOURCE_VERSION)?|" \
+            -e "s|^PKG_HASH:=.*|PKG_HASH:=${source_hash}|" \
+            contrib/openwrt/smartdns-rs/Makefile
 
       - name: Set monotonic package revision
         shell: bash
