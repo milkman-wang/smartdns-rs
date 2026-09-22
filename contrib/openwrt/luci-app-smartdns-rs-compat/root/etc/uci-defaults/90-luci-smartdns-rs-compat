@@ -6,6 +6,12 @@ delete ucitrack.@smartdns[-1]
 add ucitrack smartdns
 set ucitrack.@smartdns[-1].init=smartdns
 commit ucitrack
+set luci.languages.zh_cn='简体中文 (Simplified Chinese)'
+commit luci
 EOF
+
+# Legacy LuCI may otherwise keep using compiled modules from the old IPK.
+rm -f /tmp/luci-indexcache
+rm -rf /tmp/luci-modulecache
 
 exit 0

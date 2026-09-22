@@ -6,9 +6,13 @@ function index()
 	local page = entry({"admin", "services", "smartdns"},
 		cbi("smartdns/smartdns"), _("SmartDNS-rs"), 60)
 	page.dependent = true
+	page.i18n = "smartdns-rs-compat"
 	page.acl_depends = {"luci-app-smartdns-rs"}
 	entry({"admin", "services", "smartdns", "log"}, cbi("smartdns/log")).leaf = true
 	entry({"admin", "services", "smartdns", "server"}, cbi("smartdns/server")).leaf = true
+	entry({"admin", "services", "smartdns", "client"}, cbi("smartdns/client")).leaf = true
+	entry({"admin", "services", "smartdns", "domain"}, cbi("smartdns/domain")).leaf = true
+	entry({"admin", "services", "smartdns", "ip"}, cbi("smartdns/ip")).leaf = true
 	entry({"admin", "services", "smartdns", "status"}, call("status")).leaf = true
 end
 

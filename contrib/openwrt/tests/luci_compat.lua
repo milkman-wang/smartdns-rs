@@ -2,6 +2,7 @@
 local root = "contrib/openwrt/luci-app-smartdns-rs-compat/root/usr/lib/lua/luci/"
 package.path = root .. "../?.lua;" .. package.path
 local files, commands = {}, {}
+local command_output = "command output"
 package.preload["nixio.fs"] = function()
 	return {
 		readfile = function(path) return files[path] end,
@@ -14,9 +15,11 @@ package.preload["nixio.fs"] = function()
 	}
 end
 translate = function(value) return value end
-package.preload["luci.i18n"] = function() return {translate = translate} end
+package.preload["luci.i18n"] = function()
+	return {translate = translate, loadc = function(name) assert(name == "smartdns-rs-compat") end}
+end
 package.preload["luci.sys"] = function()
-	return {exec = function(command) commands[#commands + 1] = command; return "command output" end}
+	return {exec = function(command) commands[#commands + 1] = command; return command_output end}
 end
 
 local helpers = require "luci.model.smartdns_rs"
@@ -69,8 +72,17 @@ function methods:option(kind, name, title)
 	self.options[name] = option
 	return option
 end
-function methods:taboption(tab, ...) return self:option(...) end
-function methods:tab() end
+function methods:taboption(tab, ...)
+	assert(self.tabs and self.tabs[tab], "Option assigned to missing tab: " .. tab)
+	local option = self:option(...)
+	option.tab = tab
+	return option
+end
+function methods:tab(name)
+	self.tabs = self.tabs or {}
+	assert(not self.tabs[name], "Duplicate tab: " .. name)
+	self.tabs[name] = true
+end
 function methods:depends() end
 function methods:value() end
 function methods:chain() end
@@ -96,6 +108,17 @@ assert(option("smartdns", "port").default == "6053")
 assert(option("smartdns", "enabled").default == "0")
 assert(option("smartdns", "speed_check_mode").default == "ping,tcp:80,tcp:443")
 assert(option("smartdns", "response_mode").default == "first-ping")
+local general_count = 0
+for _, field in pairs(model.sections[2].options) do
+	if field.tab == "general" then general_count = general_count + 1 end
+end
+assert(general_count == 4, "General settings should stay as compact as C SmartDNS")
+assert(option("smartdns", "proxy_server").tab == "proxy")
+assert(option("smartdns", "dns64").tab == "dns64")
+assert(option("smartdns", "custom_conf").tab == "custom")
+model.uci.get = function() return {"192.0.2.1", "2001:db8::1"} end
+assert(option("client-rule", "client_addr"):cfgvalue("client01") == "192.0.2.1, 2001:db8::1")
+assert(option("ip-rule-list", "ip_addr"):cfgvalue("ip01") == "192.0.2.1, 2001:db8::1")
 local upstream = option("server", "enabled").map
 local server_table
 for _, section in ipairs(upstream.sections) do
@@ -116,6 +139,11 @@ editor:remove("cfg01")
 assert(files["/etc/smartdns/custom.conf"] == "")
 
 local upload = option("smartdns", "upload_list_file")
+for _, name in ipairs({"upload_conf_file", "upload_list_file", "upload_other_file"}) do
+	local picker = option("smartdns", name)
+	assert(picker:cfgvalue("cfg01") == nil, "An unused upload must not be treated as an inaccessible path")
+	assert(picker.template == "smartdns/upload", "Uploads must use CBI multipart staging on modern LuCI too")
+end
 local source = "/etc/luci-uploads/" .. upload:cbid("cfg01")
 model.formvalue = function() return "antiad.txt" end
 files[source] = "example.com\n"
@@ -127,9 +155,21 @@ assert(upload:validate("/etc/config/network", "cfg01") == nil)
 model.formvalue = function() return "../escape" end
 assert(upload:validate(source, "cfg01") == nil)
 
-option("smartdns", "_check"):write()
-assert(commands[#commands] == "/etc/init.d/smartdns check 2>&1")
-assert(model.message == "command output")
+for _, case in ipairs({
+	{"\n0", true, ""},
+	{"warning: ignored option\n\n0", true, "warning: ignored option"},
+	{"invalid configuration at line 3\n\n1", false, "invalid configuration at line 3"},
+	{"\n1", false, ""}
+}) do
+	command_output = case[1]
+	option("smartdns", "_check"):write()
+	assert(commands[#commands] == "/etc/init.d/smartdns check 2>&1; printf '\\n%s' \"$?\"")
+	assert(model.smartdns_check.valid == case[2])
+	assert(model.smartdns_check.output == case[3])
+	assert(model.smartdns_check.message == (case[2] and "Configuration is valid." or "Configuration validation failed. Please check the system log."))
+	assert(model.message == nil, "Do not create an empty CBI warning")
+end
+command_output = "command output"
 local log = assert(loadfile(root .. "model/cbi/smartdns/log.lua"))()
 assert(log.sections[1].options._log:cfgvalue() == "command output")
 assert(commands[#commands] == "/usr/libexec/smartdns-rs-call tail 2>&1")
@@ -153,6 +193,9 @@ Map = function(...)
 	local map = make_map(...)
 	map.uci.get = function(self, config, id, key)
 		if id == "cfg01" then return "server" end
+		if id == "client01" then return "client-rule" end
+		if id == "domain01" then return "domain-rule-list" end
+		if id == "ip01" then return "ip-rule-list" end
 		return "smartdns"
 	end
 	return map
@@ -166,7 +209,44 @@ assert(detail.sections[1].options.set_mark.validate == helpers.validatePacketMar
 assert(detail.sections[1].options.no_check_certificate.kind == Flag)
 assert(detail.sections[1].options.use_proxy.kind == Flag)
 assert(detail.sections[1].options.port.datatype == "port")
+assert(detail.sections[1].options.ip.tab == "general")
+assert(detail.sections[1].options.set_mark.tab == "advanced")
 arg = {"settings"}
 assert(assert(loadfile(root .. "model/cbi/smartdns/server.lua"))() == nil)
 assert(redirected == "/admin/services/smartdns")
+for _, case in ipairs({
+	{"client", "client-rule", "client_addr", "block_domain_set_file", "block", 3},
+	{"domain", "domain-rule-list", "domain_list_file", "addition_flag", "advanced", 5},
+	{"ip", "ip-rule-list", "ip_addr", "ip_alias", "advanced", 4}
+}) do
+	arg = {case[1] .. "01"}
+	local edit = assert(loadfile(root .. "model/cbi/smartdns/" .. case[1] .. ".lua"))()
+	assert(#edit.sections == 1 and edit.sections[1].name == arg[1])
+	assert(edit.sections[1].kind == NamedSection)
+	assert(edit.sections[1].options[case[3]].tab == "general")
+	assert(edit.sections[1].options[case[4]].tab == case[5])
+	for _, section in ipairs(model.sections) do
+		if section.name == case[2] then
+			assert(section.template == "cbi/tblsection")
+			local count = 0
+			for name, field in pairs(section.options) do
+				count = count + 1
+				assert(field.kind == (name == "enabled" and Flag or DummyValue))
+				assert(edit.sections[1].options[name], "Summary field has no editor: " .. name)
+			end
+			assert(count == case[6], "Rule tables should contain summary columns only")
+			assert(section:extedit(arg[1]) == "/admin/services/smartdns/" .. case[1] .. "/" .. arg[1])
+			assert(section:create() == "cfgnew")
+			assert(redirected == "/admin/services/smartdns/" .. case[1] .. "/cfgnew")
+		end
+	end
+	arg = {"cfg01"} -- Never edit an upstream through a rule URL.
+	assert(assert(loadfile(root .. "model/cbi/smartdns/" .. case[1] .. ".lua"))() == nil)
+end
+-- Modern LuCI's dispatcher loads catalogs; the legacy loadc API is absent.
+package.loaded["luci.i18n"].loadc = nil
+package.loaded["luci.model.smartdns_rs"] = nil
+local modern_helpers = require "luci.model.smartdns_rs"
+assert(modern_helpers.validateCacheSize({}, "-1") == "-1")
+assert(assert(loadfile(root .. "model/cbi/smartdns/log.lua"))())
 print("Lua 5.1 LuCI models, validation, file handlers and actions: OK")

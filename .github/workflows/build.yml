@@ -126,6 +126,12 @@ jobs:
           case "$BUILD_VARIANT" in headless|webui) ;; *) exit 1 ;; esac
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Require bilingual release notes
+        shell: bash
+        run: |
+          grep -q '^## 中文' .github/RELEASE_NOTES.md
+          grep -q '^## English' .github/RELEASE_NOTES.md
+
       - name: Build
         shell: bash
         run: just build --release --no-default-features --features "$BUILD_FEATURES" --target=${{ matrix.target }}
@@ -165,6 +171,7 @@ jobs:
           name: SmartDNS-rs ${{ inputs.variant }} ${{ inputs.version }}
           make_latest: ${{ inputs.variant == 'headless' && !inputs.prerelease }}
           target_commitish: ${{ steps.source.outputs.sha }}
+          body_path: .github/RELEASE_NOTES.md
           files: |
             dist/*.zip
             dist/*.tar.gz

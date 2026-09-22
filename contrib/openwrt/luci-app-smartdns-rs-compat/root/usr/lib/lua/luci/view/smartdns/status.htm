@@ -1,4 +1,6 @@
-<div class="cbi-section" id="smartdns-status"><%:Collecting data ...%></div>
+<fieldset class="cbi-section smartdns-status-section" aria-live="polite">
+	<p id="smartdns-status"><%:Collecting data ...%></p>
+</fieldset>
 <script type="text/javascript">
 XHR.poll(2, '<%=luci.dispatcher.build_url("admin", "services", "smartdns", "status")%>', null,
 	function(xhr, data) {

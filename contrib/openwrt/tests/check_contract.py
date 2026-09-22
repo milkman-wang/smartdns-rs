@@ -317,7 +317,7 @@ def check_luci_compat() -> None:
         if missing := sorted(label for label in labels if not translations.get(label)):
             fail("Lua LuCI translations are missing: " + ", ".join(missing))
 
-    for relative in ("usr/libexec/smartdns-rs-call", "usr/share/rpcd/acl.d/luci-app-smartdns-rs.json"):
+    for relative in ("usr/libexec/smartdns-rs-call", "usr/share/rpcd/acl.d/luci-app-smartdns-rs.json", "www/luci-static/resources/smartdns/form.css"):
         if load(compat / "root" / relative) != load(OPENWRT / "luci-app-smartdns-rs/root" / relative):
             fail("Lua/JS shared helper or ACL has diverged: " + relative)
 

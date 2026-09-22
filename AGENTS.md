@@ -738,6 +738,27 @@ pub fn reverse_lookup(&self, ip: &IpAddr) -> Option<RData> {
 
 ## Git & Contribution Guidelines
 
+### GitHub Actions and Release Requirements
+
+- Before every push, tag, merge, or manual dispatch that triggers Actions, inspect
+  the workflows that will run and the current diff. Check workflow syntax,
+  shell commands, tool versions/dependencies, package names, artifact collection,
+  and release conditions for failures introduced by the change.
+- Run the affected workflow checks locally before triggering it (including
+  actionlint, ShellCheck, LuCI JS/Lua checks, translation validation, and OpenWrt
+  contract/package tests when those files change). Fix known failures first.
+  State any checks that cannot run locally; a preflight cannot guarantee that
+  remote runners, downloads, or all cross-compilation targets will succeed.
+- After triggering Actions, inspect the actual run and failed job logs. Report
+  the run URL and its real status; do not describe a queued/running build as passed.
+- Every GitHub Release, including Headless and WebUI variants, must contain
+  meaningful Chinese and English changelog sections. Update
+  `.github/RELEASE_NOTES.md` for the changes being released, covering user-visible
+  changes, fixes, and relevant installation/upgrade notes in both languages.
+  Do not publish an empty changelog or substitute a commit list for either language.
+- Release workflows must validate both language sections before building and
+  use that file when creating or updating the release, including reruns.
+
 ### Commit Message Format
 
 We follow the **Conventional Commits** specification. Commit messages should follow this format:

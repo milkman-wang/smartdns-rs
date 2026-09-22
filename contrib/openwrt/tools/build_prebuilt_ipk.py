@@ -23,7 +23,7 @@ import urllib.request
 
 
 VERSION = "0.13.1"
-RELEASE = "24"
+RELEASE = "25.6"
 ARCH = "aarch64_cortex-a53"
 ARCHIVE_NAME = f"smartdns-aarch64-unknown-linux-musl-v{VERSION}.tar.gz"
 ARCHIVE_URL = (
@@ -336,6 +336,14 @@ def build(repo: Path, output: Path, cache: Path, binary: Path | None = None, var
             )
         )
 
+    built.extend(build_luci(repo, output))
+    return built
+
+
+def build_luci(repo: Path, output: Path) -> list[Path]:
+    """Package the JS UI without building or downloading a DNS binary."""
+    output.mkdir(parents=True, exist_ok=True)
+    built = []
     luci = repo / "contrib/openwrt/luci-app-smartdns-rs"
     with tempfile.TemporaryDirectory(prefix="smartdns-luci-") as temporary:
         root = Path(temporary)
@@ -401,6 +409,9 @@ def build_luci_compat(repo: Path, output: Path) -> list[Path]:
             if path.is_file():
                 relative = path.relative_to(source / "root").as_posix()
                 copy_file(path, root, "/" + relative, 0o755 if relative in executables else 0o644)
+        destination = root / "usr/lib/lua/luci/i18n/smartdns-rs-compat.zh-cn.lmo"
+        destination.parent.mkdir(parents=True)
+        compile_lmo(source / "po/zh_Hans/smartdns.po", destination)
         built.append(package(
             output, "luci-app-smartdns-rs-compat", f"{VERSION}-{RELEASE}", "all",
             "luci-base, smartdns-rs", "Lua LuCI support for SmartDNS-rs.", root,
@@ -412,15 +423,6 @@ def build_luci_compat(repo: Path, output: Path) -> list[Path]:
                 "prerm": DEFAULT_PRERM,
             },
         ))
-    with tempfile.TemporaryDirectory(prefix="smartdns-lua-i18n-") as temporary:
-        root = Path(temporary)
-        destination = root / "usr/lib/lua/luci/i18n/smartdns.zh-cn.lmo"
-        destination.parent.mkdir(parents=True)
-        compile_lmo(source / "po/zh_Hans/smartdns.po", destination)
-        built.append(package(
-            output, "luci-i18n-smartdns-rs-compat-zh-cn", f"{VERSION}-{RELEASE}", "all",
-            "luci-app-smartdns-rs-compat", "Chinese translation for the Lua LuCI UI.", root,
-        ))
     return built
 
 
@@ -431,11 +433,16 @@ def main() -> None:
     parser.add_argument("--cache", type=Path, default=Path("dist/openwrt/cache"))
     parser.add_argument("--binary", type=Path, help="Use a locally built target binary")
     parser.add_argument("--variant", choices=["headless", "webui"], default="headless")
-    parser.add_argument("--luci-compat-only", action="store_true",
+    ui_only = parser.add_mutually_exclusive_group()
+    ui_only.add_argument("--luci-only", action="store_true",
+                        help="Package the current JS UI and translation only; no DNS binary")
+    ui_only.add_argument("--luci-compat-only", action="store_true",
                         help="Package the current Lua UI and translation only; no prebuilt DNS binary")
     args = parser.parse_args()
     if args.luci_compat_only:
         artifacts = build_luci_compat(args.repo.resolve(), args.output.resolve())
+    elif args.luci_only:
+        artifacts = build_luci(args.repo.resolve(), args.output.resolve())
     else:
         if args.variant == "webui" and args.binary is None:
             parser.error("--variant webui requires --binary built with the webui feature")

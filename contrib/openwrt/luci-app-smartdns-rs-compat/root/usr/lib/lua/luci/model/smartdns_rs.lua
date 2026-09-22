@@ -1,6 +1,10 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 local fs = require "nixio.fs"
-local translate = require("luci.i18n").translate
+local i18n = require "luci.i18n"
+-- A separate catalog avoids file ownership clashes with older split packages.
+-- Ucode-based LuCI loads all language catalogs in its dispatcher instead.
+if i18n.loadc then i18n.loadc("smartdns-rs-compat") end
+local translate = i18n.translate
 local M = {}
 
 function M.text_file(option, path)
@@ -14,7 +18,10 @@ end
 -- CBI stages multipart uploads here on both Lua LuCI and luci-compat.
 -- Keep uploaded files in the same directories used by the JavaScript UI.
 function M.upload_file(option, directory)
-	function option.cfgvalue() return "" end
+	-- Modern cbi/upload renders a remote file browser, whose selected paths do
+	-- not use CBI's multipart staging. Use a local picker on both LuCI versions.
+	option.template = "smartdns/upload"
+	function option.cfgvalue() return nil end
 	function option.validate(self, value, section)
 		if not value or value == "" then return value end
 		local name = self.map:formvalue("cbid.smartdns." .. section .. "._upload_name")

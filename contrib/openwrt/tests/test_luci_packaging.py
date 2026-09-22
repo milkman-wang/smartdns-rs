@@ -25,10 +25,21 @@ class LuaPackagingTest(unittest.TestCase):
             expected = template.read_bytes().replace(b"\r\n", b"\n")
             template.write_bytes(expected.replace(b"\n", b"\r\n"))
 
-            application, _translation = build(repo, repo / "packages")
+            packages = build(repo, repo / "packages")
+            self.assertEqual(len(packages), 1, "Compat must not need a separate translation package")
+            application = packages[0]
             with tarfile.open(application, "r:gz") as package:
+                with tarfile.open(fileobj=io.BytesIO(package.extractfile("./control.tar.gz").read()), mode="r:gz") as control_archive:
+                    control = control_archive.extractfile("./control").read().decode()
+                    self.assertIn("Conflicts: luci-app-smartdns, luci-app-smartdns-rs\n", control)
+                    self.assertNotIn("luci-i18n-smartdns-rs-compat-zh-cn", control)
                 with tarfile.open(fileobj=io.BytesIO(package.extractfile("./data.tar.gz").read()), mode="r:gz") as data:
                     installed = data.extractfile("./" + TEMPLATE.relative_to("root").as_posix()).read()
+                    self.assertNotIn("./usr/lib/lua/luci/i18n/smartdns.zh-cn.lmo", data.getnames(),
+                                     "Do not overwrite the catalog owned by older language packages")
+                    translation = data.extractfile("./usr/lib/lua/luci/i18n/smartdns-rs-compat.zh-cn.lmo").read()
+                    self.assertIn("常规设置".encode(), translation)
+                    self.assertIsNotNone(data.getmember("./www/luci-static/resources/smartdns/form.css"))
             self.assertEqual(installed, expected)
             self.assertNotIn(b"\r", installed)
 

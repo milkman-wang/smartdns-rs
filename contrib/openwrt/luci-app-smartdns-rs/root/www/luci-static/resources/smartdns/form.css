@@ -1,0 +1,129 @@
+#cbi-smartdns {
+	--smartdns-control-height: 2.75rem;
+	--smartdns-field-width: 16rem;
+	--smartdns-wide-field-width: 36rem;
+}
+#cbi-smartdns .cbi-section,
+#cbi-smartdns .cbi-section-node,
+#cbi-smartdns .cbi-tabcontainer {
+	min-width: 0;
+}
+#cbi-smartdns .cbi-section-node {
+	padding-top: .5rem;
+	padding-bottom: .75rem;
+}
+#cbi-smartdns div.cbi-value {
+	box-sizing: border-box;
+	width: 100%;
+	margin: 0;
+	/* Argon sets row padding with !important, including the last row. */
+	padding: .75rem 1rem !important;
+}
+/* Keep the theme's label columns and responsive form layout.
+ * New LuCI wraps individual widgets in cbid divs; legacy CBI does not. */
+#cbi-smartdns div.cbi-value :where(.cbi-value-field, .cbi-value-field > div[id^="cbid."]) > :where(input[type="text"], input[type="password"], input[type="number"], input[type="file"], select, textarea, .cbi-dropdown, .cbi-dynlist) {
+	box-sizing: border-box;
+	/* Percentage widths collapse inside LuCI's shrink-to-fit table cells. */
+	width: var(--smartdns-field-width);
+	min-width: 0;
+	max-width: 100%;
+	margin: 0;
+	font: inherit;
+}
+#cbi-smartdns div.cbi-value :where(.cbi-value-field, .cbi-value-field > div[id^="cbid."]) > :where(textarea, input[type="file"], .cbi-dynlist) {
+	width: var(--smartdns-wide-field-width);
+}
+#cbi-smartdns div.cbi-value :where(.cbi-value-field, .cbi-value-field > div[id^="cbid."]) > :where(input[type="text"], input[type="password"], input[type="number"], select, .cbi-dropdown) {
+	height: var(--smartdns-control-height);
+	min-height: var(--smartdns-control-height);
+	padding: .5rem .75rem;
+	line-height: 1.4;
+}
+#cbi-smartdns div.cbi-value :where(.cbi-value-field, .cbi-value-field > div[id^="cbid."]) > textarea {
+	/* CBI emits an inline percentage width, which also collapses in table cells. */
+	width: var(--smartdns-wide-field-width) !important;
+	height: auto;
+	min-height: 10rem;
+	padding: .75rem;
+	font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+	font-size: .875rem;
+	line-height: 1.5 !important;
+	white-space: pre-wrap;
+	resize: vertical;
+}
+#cbi-smartdns div.cbi-value > .cbi-value-field :where(input, textarea)::placeholder {
+	font: inherit;
+	color: inherit;
+	opacity: .65;
+}
+#cbi-smartdns div.cbi-value :where(.cbi-value-field, .cbi-value-field > div[id^="cbid."]) > input[type="file"] {
+	height: var(--smartdns-control-height);
+	padding: 0;
+	line-height: calc(var(--smartdns-control-height) - 2px);
+	overflow: hidden;
+}
+#cbi-smartdns input[type="file"]::file-selector-button {
+	height: 100%;
+	margin: 0 .75rem 0 0;
+	padding: 0 .75rem;
+	border: 0;
+	border-right: 1px solid rgba(128, 128, 128, .3);
+	background: rgba(128, 128, 128, .1);
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+#cbi-smartdns div.cbi-value :where(.cbi-value-field, .cbi-value-field > div[id^="cbid."]) > .cbi-button {
+	box-sizing: border-box;
+	min-height: var(--smartdns-control-height);
+	margin: 0;
+	padding: .5rem 1rem;
+	line-height: 1.4;
+}
+#cbi-smartdns div.cbi-value :where(.cbi-value-field, .cbi-value-field > div[id^="cbid."]) > input[type="checkbox"] {
+	margin: .85rem 0;
+}
+#cbi-smartdns .cbi-value-description {
+	max-width: var(--smartdns-wide-field-width);
+	margin: .5rem 0 0;
+	padding: 0;
+	line-height: 1.5;
+}
+#cbi-smartdns .cbi-tabmenu {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+#cbi-smartdns-server > .cbi-section-node,
+#cbi-smartdns-client-rule > .cbi-section-node,
+#cbi-smartdns-domain-rule-list > .cbi-section-node,
+#cbi-smartdns-ip-rule-list > .cbi-section-node,
+#cbi-smartdns-download-file > .cbi-section-node {
+	overflow-x: auto;
+}
+#cbi-smartdns .cbi-section-table td {
+	overflow-wrap: anywhere;
+}
+#cbi-smartdns .cbi-section-table :where(select, .cbi-dropdown) {
+	box-sizing: border-box;
+	width: var(--smartdns-field-width);
+	min-width: 0;
+	max-width: 100%;
+}
+#cbi-smartdns .smartdns-status-section {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: flex-start;
+	box-sizing: border-box;
+	min-height: 3.5rem;
+	padding: .75rem 1.25rem;
+	gap: .25rem;
+	font-weight: 600;
+	line-height: 1.5;
+}
+#cbi-smartdns #smartdns-status {
+	margin: 0;
+	padding: 0;
+	line-height: inherit;
+}

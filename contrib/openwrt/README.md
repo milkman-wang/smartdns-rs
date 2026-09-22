@@ -69,8 +69,7 @@ make package/luci-app-smartdns-rs-compat/compile V=s
 - `smartdns-rs`：Rust 二进制、procd、UCI、dnsmasq 联动和默认文件；
 - `luci-app-smartdns-rs`：LuCI 页面、ACL 和日志助手；
 - `luci-i18n-smartdns-rs-zh-cn`：简体中文翻译；
-- `luci-app-smartdns-rs-compat`：Lua CBI 页面；
-- `luci-i18n-smartdns-rs-compat-zh-cn`：Lua 版简体中文翻译。
+- `luci-app-smartdns-rs-compat`：Lua CBI 页面，内置简体中文翻译。
 
 ### Lua LuCI 兼容版
 
@@ -78,10 +77,10 @@ make package/luci-app-smartdns-rs-compat/compile V=s
 
 两种页面包二选一，不要同时安装。切换时先卸载现有 LuCI 页面包和对应翻译，再安装另一套页面包；保留 `smartdns-rs` 主包和 `/etc/config/smartdns`。现代 LuCI 运行 Lua 版前还需从固件的软件源安装 `luci-compat`。旧 Lua LuCI 已内置 CBI，不需要这个依赖，因此发布的通用 Lua 包不强制依赖现代固件专属的 `luci-lua-runtime`。
 
-在 Lua LuCI / QWRT 上安装时，需要下面两个包；只安装带 `compat` 的中文翻译包不会提供菜单和表单。若“服务”菜单没有 SmartDNS-rs，先用 `opkg list-installed | grep smartdns` 确认安装的是 `luci-app-smartdns-rs-compat`，而不是 JS 页面包 `luci-app-smartdns-rs`。
+在 Lua LuCI / QWRT 上只需安装 compat 主包，现有简体中文翻译已合并其中。内置翻译使用独立文件名，与旧语言包无文件冲突；旧包可保留或卸载。若“服务”菜单没有 SmartDNS-rs，先用 `opkg list-installed | grep smartdns` 确认安装的是 `luci-app-smartdns-rs-compat`，而不是 JS 页面包 `luci-app-smartdns-rs`。
 
 ```sh
-opkg install luci-app-smartdns-rs-compat_*.ipk luci-i18n-smartdns-rs-compat-zh-cn_*.ipk
+opkg install luci-app-smartdns-rs-compat_*.ipk
 rm -f /tmp/luci-indexcache
 ```
 
@@ -100,6 +99,8 @@ Lua 兼容只解决管理页面问题，不能据此保证二进制能运行在 
 ```sh
 python3 contrib/openwrt/tools/build_prebuilt_ipk.py --luci-compat-only --output dist/openwrt/luci-compat
 ```
+
+只打包 JS 页面及其独立中文包可使用 `--luci-only --output dist/openwrt/luci-js`。两版共用相同的表单样式文件，契约检查会验证它们一致；配置编辑器使用等宽字体和 1.5 倍行高，不改变文件中的空行。
 
 若稳定版 OpenWrt 的 packages feed 还没有满足最低版本的 Rust，请使用与该 OpenWrt 分支匹配、但 Rust 足够新的 packages feed，或使用 snapshot SDK。不要用宿主机 `cargo build` 的产物代替 OpenWrt 交叉编译结果。
 
@@ -171,7 +172,7 @@ Fork 的 `Sync upstream` 工作流每天检查一次 `mokeyish/smartdns-rs` 的 
 1. 用普通 Git merge 合并上游，遇到冲突立即失败，不强行覆盖 OpenWrt 适配；
 2. 先推送合并后的 Fork 提交，再将 OpenWrt Makefile 固定到这份合并源码及其归档校验值，保留本 fork 的功能；同步更新两套 LuCI 版本；
 3. 推送 Fork 的 `main` 并分别调度无界面版和 WebUI 版的九架构 APK/IPK 构建；
-4. 仅在契约测试、九个 snapshot APK 架构和九个 OpenWrt 24.10.7 IPK 架构全部成功后创建 GitHub Release，同时生成 `SHA256SUMS`。Release 只包含本项目的主包、JS/Lua 两种 LuCI 和各自的简体中文翻译，不包含 SDK 下载的依赖包；APK 主包文件名会附加 OpenWrt 架构，避免不同架构相互覆盖。发布文件名中的 `~` 会规范为 `.`，与 GitHub 实际保存的附件名及校验清单保持一致。
+4. 仅在契约测试、九个 snapshot APK 架构和九个 OpenWrt 24.10.7 IPK 架构全部成功后创建 GitHub Release，同时生成 `SHA256SUMS`。Release 只包含本项目的主包、JS LuCI 与其简体中文翻译、内置中文的 Lua compat 包，不包含 SDK 下载的依赖包；APK 主包文件名会附加 OpenWrt 架构，避免不同架构相互覆盖。发布文件名中的 `~` 会规范为 `.`，与 GitHub 实际保存的附件名及校验清单保持一致。
 
 Action 的运行编号会成为单调递增的 `PKG_RELEASE`，因此同一个 SmartDNS-rs 版本内的后续自动包也能被包管理器识别为升级。OpenWrt 25.12/snapshot 使用 APK；OpenWrt 24.10 以及仍使用 opkg 的兼容固件应安装 Release 中的 IPK。两个矩阵使用各自的官方 SDK 构建，包格式不能混装。
 

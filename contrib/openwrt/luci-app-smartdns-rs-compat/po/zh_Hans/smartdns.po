@@ -1597,7 +1597,10 @@ msgid "Validate Configuration"
 msgstr "验证配置"
 
 msgid "Configuration is valid."
-msgstr "配置有效。"
+msgstr "配置验证通过。"
+
+msgid "Configuration validation failed. Please check the system log."
+msgstr "配置验证失败，请检查系统日志。"
 
 msgid "Native Configuration"
 msgstr "原生配置"
@@ -1718,3 +1721,6 @@ msgstr "缓存大小必须为 -1、0 或正整数。"
 
 msgid "Supported modes are ping, tcp:PORT, tcp-syn:PORT, http[:PORT], https[:PORT], and none."
 msgstr "支持 ping、tcp:端口、tcp-syn:端口、http[:端口]、https[:端口] 和 none。"
+
+msgid "Downloaded domain lists take effect only after their /etc/smartdns/domain-set/NAME path is selected in a domain forwarding or blocking rule."
+msgstr "下载域名列表后，请在域名分流或屏蔽规则中引用 /etc/smartdns/domain-set/文件名，规则才会生效。"

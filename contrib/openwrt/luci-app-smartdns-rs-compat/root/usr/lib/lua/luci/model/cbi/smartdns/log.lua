@@ -1,5 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 local sys = require "luci.sys"
+local i18n = require "luci.i18n"
+if i18n.loadc then i18n.loadc("smartdns-rs-compat") end
 local m = SimpleForm("smartdns_log", translate("SmartDNS-rs Log"))
 m.reset = false
 m.submit = false
