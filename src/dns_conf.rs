@@ -418,6 +418,10 @@ impl RuntimeConfig {
     pub fn dualstack_ip_selection(&self) -> bool {
         self.dualstack_ip_selection.unwrap_or(true)
     }
+    /// Prefer IPv4 independently of latency-based dual-stack selection.
+    pub fn dualstack_ip_prefer_ipv4(&self) -> bool {
+        self.dualstack_ip_prefer_ipv4.unwrap_or_default()
+    }
     /// dualstack-ip-selection-threshold [num] (0~1000)
     #[inline]
     pub fn dualstack_ip_selection_threshold(&self) -> u64 {
@@ -1075,6 +1079,7 @@ impl RuntimeConfigBuilder {
                 ForceAAAASOA(v) => self.force_aaaa_soa = Some(v),
                 ForceHTTPSSOA(v) => self.force_https_soa = Some(v),
                 DualstackIpAllowForceAAAA(v) => self.dualstack_ip_allow_force_aaaa = Some(v),
+                DualstackIpPreferIpv4(v) => self.dualstack_ip_prefer_ipv4 = Some(v),
                 DualstackIpSelection(v) => self.dualstack_ip_selection = Some(v),
                 ServerName(v) => self.server_name = Some(v),
                 NumWorkers(v) => self.num_workers = Some(v),

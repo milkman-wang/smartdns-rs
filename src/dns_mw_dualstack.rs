@@ -16,6 +16,7 @@ pub struct DnsDualStackIpSelectionMiddleware;
 impl DnsDualStackIpSelectionMiddleware {
     pub fn is_configured(cfg: &crate::dns_conf::RuntimeConfig) -> bool {
         cfg.dualstack_ip_selection()
+            || cfg.dualstack_ip_prefer_ipv4()
             || cfg.rule_groups().values().any(|group| {
                 group
                     .domain_rules
@@ -38,7 +39,7 @@ impl Middleware<DnsContext, DnsRequest, DnsResponse, DnsError>
         use RecordType::{A, AAAA};
 
         // highest priority
-        if ctx.server_opts.no_dualstack_selection() || ctx.server_opts.no_speed_check() {
+        if ctx.server_opts.no_dualstack_selection() {
             return next.run(ctx, req).await;
         }
 
@@ -46,6 +47,17 @@ impl Middleware<DnsContext, DnsRequest, DnsResponse, DnsError>
 
         // must be ip query.
         if !query_type.is_ip_addr() {
+            return next.run(ctx, req).await;
+        }
+
+        if ctx.cfg().dualstack_ip_prefer_ipv4() {
+            if query_type == A {
+                return next.run(ctx, req).await;
+            }
+            return prefer_ipv4(ctx, req, next).await;
+        }
+
+        if ctx.server_opts.no_speed_check() {
             return next.run(ctx, req).await;
         }
 
@@ -173,6 +185,98 @@ impl Middleware<DnsContext, DnsRequest, DnsResponse, DnsError>
     }
 }
 
+async fn prefer_ipv4(
+    ctx: &mut DnsContext,
+    req: &DnsRequest,
+    next: Next<'_, DnsContext, DnsRequest, DnsResponse, DnsError>,
+) -> Result<DnsResponse, DnsError> {
+    let ttl_limit = [
+        ctx.domain_rule
+            .get_ref(|rule| rule.rr_ttl_max.as_ref().or(rule.rr_ttl.as_ref()))
+            .copied()
+            .or_else(|| ctx.cfg().rr_ttl_max()),
+        ctx.cfg().rr_ttl_reply_max(),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .unwrap_or(u32::MAX as u64)
+    .min(u32::MAX as u64) as u32;
+    let modes = if ctx.server_opts.no_speed_check() {
+        None
+    } else {
+        ctx.domain_rule
+            .get_ref(|r| r.speed_check_mode.as_ref())
+            .or_else(|| ctx.cfg().speed_check_mode())
+            .filter(|m| !m.is_empty() && !m.iter().any(SpeedCheckMode::is_none))
+            .cloned()
+    };
+    let mut ipv4_ctx = ctx.clone();
+    ipv4_ctx.is_dualstack = true;
+    let mut ipv4_req = req.clone();
+    ipv4_req.set_query_type(RecordType::A);
+    let ipv4_next = next.clone();
+    let ipv4 = async move {
+        let start = std::time::Instant::now();
+        let response = ipv4_next.run(&mut ipv4_ctx, &ipv4_req).await;
+        crate::stats::completed(&ipv4_ctx, &ipv4_req, &response, start.elapsed());
+        crate::plugins::completed(&ipv4_ctx, &ipv4_req, &response, start, None);
+        match response {
+            Ok(response) => {
+                let usable = ipv4_usable(&response, modes.as_deref().map(Vec::as_slice)).await;
+                // Do not retain the preference longer than the A answer supporting it.
+                usable.then(|| response.min_ttl().unwrap_or(0).min(ttl_limit))
+            }
+            Err(_) => None,
+        }
+    };
+    let ipv4 = std::pin::pin!(ipv4);
+    let ipv6 = next.run(ctx, req);
+    let nodata = |ttl| {
+        let query = req.query().original().clone();
+        let mut response = DnsResponse::new_with_max_ttl(query.clone(), []);
+        response.add_authority(Record::from_rdata(
+            query.name().clone(),
+            ttl,
+            RData::default_soa(),
+        ));
+        Ok(response)
+    };
+    match select(ipv4, ipv6).await {
+        Either::Left((Some(ttl), _)) => nodata(ttl),
+        Either::Left((None, ipv6)) => ipv6.await,
+        Either::Right((response, ipv4)) => {
+            if let Some(ttl) = ipv4.await {
+                nodata(ttl)
+            } else {
+                response
+            }
+        }
+    }
+}
+
+async fn ipv4_usable(response: &DnsResponse, modes: Option<&[SpeedCheckMode]>) -> bool {
+    let addresses: Vec<_> = response
+        .ip_addrs()
+        .into_iter()
+        .filter(IpAddr::is_ipv4)
+        .collect();
+    if addresses.is_empty() {
+        return false;
+    }
+    match response.probe_result() {
+        ProbeResult::Measured(_) => true,
+        ProbeResult::Failed => false,
+        ProbeResult::Unchecked => match modes {
+            Some(modes) => multi_mode_ping_fastest(addresses, modes.to_vec())
+                .await
+                .is_some(),
+            // Proxy/no-probe groups rely on a valid A answer, not a direct-path probe.
+            None => true,
+        },
+    }
+}
+
 async fn which_faster(
     this: &DnsResponse,
     that: &DnsResponse,
@@ -262,6 +366,122 @@ mod tests {
         dns_mw::DnsMockMiddleware,
         libdns::proto::op::{Query, ResponseCode},
     };
+
+    #[tokio::test]
+    async fn ipv4_preference_preserves_ipv6_fallback_and_a_answers() {
+        for (probe, speed, filtered) in [
+            (
+                Some(ProbeResult::Measured(Duration::from_millis(300))),
+                "tcp:443",
+                true,
+            ),
+            (Some(ProbeResult::Failed), "tcp:443", false),
+            (None, "tcp:443", false),
+            (Some(ProbeResult::Unchecked), "none", true),
+            (None, "none", false),
+        ] {
+            let cfg = RuntimeConfig::builder()
+                .with("dualstack-ip-selection no")
+                .with("dualstack-ip-prefer-ipv4 yes")
+                .with("local-ttl 1")
+                .with("rr-ttl-reply-max 60")
+                .with("dualstack-ip-allow-force-AAAA yes")
+                .with(&format!(
+                    "domain-rules /dualstack.example/ -d no -c {speed}"
+                ))
+                .build()
+                .unwrap();
+            let a = Query::query("dualstack.example.".parse().unwrap(), RecordType::A);
+            let aaaa = Query::query(a.name().clone(), RecordType::AAAA);
+            let ipv6 =
+                DnsResponse::from_rdata(aaaa.clone(), RData::AAAA("2001:db8::6".parse().unwrap()))
+                    .with_probe_result(ProbeResult::Measured(Duration::from_millis(1)));
+            let ipv4 = match probe {
+                Some(probe) => {
+                    DnsResponse::from_rdata(a.clone(), RData::A("192.0.2.4".parse().unwrap()))
+                        .with_probe_result(probe)
+                }
+                None => DnsResponse::new_with_max_ttl(a.clone(), []),
+            };
+            let expected_a = ipv4.ip_addrs();
+            let a_ttl = ipv4.min_ttl().unwrap_or(0);
+            let handler = DnsMockMiddleware::mock(DnsDualStackIpSelectionMiddleware)
+                .with_result(a.clone(), Ok(ipv4))
+                .with_result(aaaa.clone(), Ok(ipv6))
+                .build(cfg);
+            let response = handler
+                .lookup(aaaa.name().clone(), RecordType::AAAA)
+                .await
+                .unwrap();
+            assert_eq!(response.response_code(), ResponseCode::NoError);
+            if filtered {
+                assert!(response.answers().is_empty());
+                assert_eq!(response.authorities()[0].record_type(), RecordType::SOA);
+                assert_eq!(response.authorities()[0].ttl(), a_ttl.min(60));
+            } else {
+                assert_eq!(
+                    response.ip_addrs(),
+                    vec!["2001:db8::6".parse::<IpAddr>().unwrap()]
+                );
+            }
+            let response = handler
+                .lookup(a.name().clone(), RecordType::A)
+                .await
+                .unwrap();
+            assert_eq!(response.ip_addrs(), expected_a);
+        }
+    }
+
+    #[tokio::test]
+    async fn ipv4_lookup_errors_do_not_block_ipv6() {
+        let cfg = RuntimeConfig::builder()
+            .with("dualstack-ip-prefer-ipv4 yes")
+            .build()
+            .unwrap();
+        let handler = DnsMockMiddleware::mock(DnsDualStackIpSelectionMiddleware)
+            .with_aaaa_record("ipv6-only.example", "2001:db8::6".parse().unwrap())
+            .build(cfg);
+        let response = handler
+            .lookup("ipv6-only.example", RecordType::AAAA)
+            .await
+            .unwrap();
+        assert_eq!(
+            response.ip_addrs(),
+            vec!["2001:db8::6".parse::<IpAddr>().unwrap()]
+        );
+    }
+
+    #[tokio::test]
+    async fn ipv6_lookup_errors_do_not_block_usable_ipv4() {
+        let cfg = RuntimeConfig::builder()
+            .with("dualstack-ip-prefer-ipv4 yes")
+            .build()
+            .unwrap();
+        let a = Query::query("ipv4-only.example.".parse().unwrap(), RecordType::A);
+        let ipv4 = DnsResponse::from_rdata(a.clone(), RData::A("192.0.2.4".parse().unwrap()))
+            .with_probe_result(ProbeResult::Measured(Duration::from_millis(1)));
+        let handler = DnsMockMiddleware::mock(DnsDualStackIpSelectionMiddleware)
+            .with_result(a.clone(), Ok(ipv4))
+            .build(cfg);
+        let response = handler
+            .lookup(a.name().clone(), RecordType::AAAA)
+            .await
+            .unwrap();
+        assert_eq!(response.response_code(), ResponseCode::NoError);
+        assert!(response.answers().is_empty());
+        assert_eq!(response.authorities()[0].record_type(), RecordType::SOA);
+    }
+
+    #[tokio::test]
+    async fn unchecked_ipv4_requires_a_successful_configured_probe() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let modes = [SpeedCheckMode::Tcp(listener.local_addr().unwrap().port())];
+        let query = Query::query("probe.example.".parse().unwrap(), RecordType::A);
+        let response = DnsResponse::from_rdata(query, RData::A("127.0.0.1".parse().unwrap()));
+        assert!(ipv4_usable(&response, Some(&modes)).await);
+        drop(listener);
+        assert!(!ipv4_usable(&response, Some(&modes)).await);
+    }
     #[tokio::test]
     async fn test_dualstack_uses_configured_probe_and_returns_nodata() {
         for (speed, filtered) in [("tcp-syn:443", true), ("none", false)] {
@@ -297,6 +517,10 @@ mod tests {
         for (lines, expected) in [
             (vec!["dualstack-ip-selection no"], false),
             (vec!["dualstack-ip-selection yes"], true),
+            (
+                vec!["dualstack-ip-selection no", "dualstack-ip-prefer-ipv4 yes"],
+                true,
+            ),
             (
                 vec![
                     "dualstack-ip-selection no",

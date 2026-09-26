@@ -174,6 +174,9 @@ pub struct Config {
     ///
     /// dualstack-ip-selection [yes|no]
     pub dualstack_ip_selection: Option<bool>,
+    /// Prefer usable IPv4 answers while retaining IPv6 when IPv4 is unavailable.
+    /// Independent of latency-based dualstack-ip-selection.
+    pub dualstack_ip_prefer_ipv4: Option<bool>,
     /// dualstack-ip-selection-threshold [num] (0~1000)
     pub dualstack_ip_selection_threshold: Option<u64>,
     /// dualstack-ip-allow-force-AAAA [yes|no]

@@ -144,6 +144,7 @@ pub enum ConfigItem {
     DomainSetProvider(DomainSetProvider),
     DualstackIpAllowForceAAAA(bool),
     DualstackIpSelection(bool),
+    DualstackIpPreferIpv4(bool),
     DualstackIpSelectionThreshold(u64),
     EdnsClientSubnet(IpNet),
     ExpandPtrFromAddress(bool),
@@ -252,6 +253,7 @@ impl std::fmt::Display for ConfigItem {
             ConfigItem::DomainSetProvider(_) => todo!(),
             ConfigItem::DualstackIpAllowForceAAAA(_) => todo!(),
             ConfigItem::DualstackIpSelection(_) => todo!(),
+            ConfigItem::DualstackIpPreferIpv4(v) => write!(f, "dualstack-ip-prefer-ipv4 {v}")?,
             ConfigItem::DualstackIpSelectionThreshold(_) => todo!(),
             ConfigItem::EdnsClientSubnet(_) => todo!(),
             ConfigItem::ExpandPtrFromAddress(_) => todo!(),
@@ -464,6 +466,10 @@ fn parse_line<'a>(input: &'a str) -> IResult<&'a str, ConfigLine<'a>> {
     ));
 
     let group4 = alt((
+        map(
+            config("dualstack-ip-prefer-ipv4"),
+            ConfigItem::DualstackIpPreferIpv4,
+        ),
         map(config("resolv-hostanme"), ConfigItem::ResolvHostname),
         map(config("response-mode"), ConfigItem::ResponseMode),
         map(config("server-name"), ConfigItem::ServerName),
