@@ -817,7 +817,11 @@ impl RuntimeConfigBuilder {
             }
         }
 
-        // find device address
+        // Platforms with SO_BINDTODEVICE must retain the configured address.
+        // Replacing [::]@lo with ::1 would discard IPv4-mapped connections;
+        // replacing an explicit address would also change its bind scope.
+        // Other platforms keep the interface-address fallback.
+        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
         {
             if !cfg.binds.is_empty() {
                 use local_ip_address::list_afinet_netifas;
@@ -1315,6 +1319,27 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    fn test_device_binding_preserves_wildcard_and_explicit_addresses() {
+        for address in ["[::]", "0.0.0.0", "[::1]", "127.0.0.2"] {
+            let cfg = RuntimeConfig::builder()
+                .with(&format!("bind {address}:15354@lo -group China"))
+                .with(&format!("bind-tcp {address}:15354@lo -group China"))
+                .build()
+                .unwrap();
+            assert_eq!(cfg.binds().len(), 2);
+            for bind in cfg.binds() {
+                assert_eq!(
+                    bind.sock_addr(),
+                    format!("{address}:15354").parse().unwrap()
+                );
+                assert_eq!(bind.device(), Some("lo"));
+                assert_eq!(bind.server_opts().group.as_deref(), Some("China"));
+            }
+        }
     }
 
     #[test]

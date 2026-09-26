@@ -755,6 +755,8 @@ pub fn reverse_lookup(&self, ip: &IpAddr) -> Option<RData> {
   meaningful Chinese and English changelog sections. Update
   `.github/RELEASE_NOTES.md` for the changes being released, covering user-visible
   changes, fixes, and relevant installation/upgrade notes in both languages.
+  Release notes must describe only the version being released. Rewrite them for
+  each release; do not accumulate changes already published in previous versions.
   Do not publish an empty changelog or substitute a commit list for either language.
 - Release workflows must validate both language sections before building and
   use that file when creating or updating the release, including reruns.

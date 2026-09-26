@@ -163,3 +163,58 @@ impl LocalAddr for UdpSocket {
         self.local_addr()
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use crate::{config::IBindConfig, dns_conf::RuntimeConfig};
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Exercise the complete configuration-to-socket path used by Passwall.
+    #[tokio::test]
+    async fn device_wildcard_accepts_both_families() {
+        let cfg = RuntimeConfig::builder()
+            .with("bind [::]:0@lo -group China")
+            .with("bind-tcp [::]:0@lo -group China")
+            .build()
+            .unwrap();
+        let udp_config = &cfg.binds()[0];
+        let tcp_config = &cfg.binds()[1];
+        let udp = setup_udp_socket(udp_config.sock_addr(), udp_config.device()).unwrap();
+        let tcp = setup_tcp_socket(tcp_config.sock_addr(), tcp_config.device()).unwrap();
+        assert!(udp.local_addr().unwrap().ip().is_unspecified());
+        assert!(tcp.local_addr().unwrap().ip().is_unspecified());
+
+        for host in ["127.0.0.1", "::1"] {
+            let ip = host.parse::<std::net::IpAddr>().unwrap();
+            tokio::time::timeout(Duration::from_secs(2), async {
+                let client = UdpSocket::bind((ip, 0)).await.unwrap();
+                client
+                    .send_to(b"dns", (ip, udp.local_addr().unwrap().port()))
+                    .await
+                    .unwrap();
+                let mut packet = [0; 3];
+                let (len, peer) = udp.recv_from(&mut packet).await.unwrap();
+                assert_eq!(&packet[..len], b"dns");
+                udp.send_to(&packet, peer).await.unwrap();
+                let (len, _) = client.recv_from(&mut packet).await.unwrap();
+                assert_eq!(&packet[..len], b"dns");
+
+                let mut client =
+                    tokio::net::TcpStream::connect((ip, tcp.local_addr().unwrap().port()))
+                        .await
+                        .unwrap();
+                let (mut server, _) = tcp.accept().await.unwrap();
+                client.write_all(b"dns").await.unwrap();
+                server.read_exact(&mut packet).await.unwrap();
+                assert_eq!(&packet, b"dns");
+                server.write_all(b"dns").await.unwrap();
+                client.read_exact(&mut packet).await.unwrap();
+                assert_eq!(&packet, b"dns");
+            })
+            .await
+            .expect("both loopback address families must work");
+        }
+    }
+}
